@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ChoiceBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.control.Spinner?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.Tooltip?>
+<?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Priority?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.RowConstraints?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox xmlns="http://javafx.com/javafx" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="qupath.ext.tiatoolbox.ui.TIAController"
+      spacing="10.0" prefWidth="480.0">
+    <padding><Insets top="14" right="14" bottom="14" left="14"/></padding>
+
+    <GridPane hgap="8.0" vgap="6.0">
+        <columnConstraints>
+            <ColumnConstraints minWidth="120.0"/>
+            <ColumnConstraints hgrow="ALWAYS"/>
+            <ColumnConstraints minWidth="80.0"/>
+        </columnConstraints>
+        <rowConstraints>
+            <RowConstraints/><RowConstraints/><RowConstraints/><RowConstraints/>
+        </rowConstraints>
+
+        <Label text="%ui.python-exe" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+        <TextField fx:id="pythonField" GridPane.rowIndex="0" GridPane.columnIndex="1">
+            <tooltip><Tooltip text="%ui.python-exe.help"/></tooltip>
+        </TextField>
+        <Button fx:id="browseButton" text="%ui.python-exe.browse"
+                onAction="#onBrowsePython" GridPane.rowIndex="0" GridPane.columnIndex="2"/>
+
+        <Label text="%ui.model" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+        <ChoiceBox fx:id="modelChoice" maxWidth="Infinity"
+                   GridPane.rowIndex="1" GridPane.columnIndex="1" GridPane.columnSpan="2"/>
+
+        <Label text="%ui.device" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+        <ChoiceBox fx:id="deviceChoice" maxWidth="Infinity"
+                   GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+        <Spinner fx:id="batchSpinner" editable="true" prefWidth="80.0"
+                 GridPane.rowIndex="2" GridPane.columnIndex="2">
+            <tooltip><Tooltip text="%ui.batch-size"/></tooltip>
+        </Spinner>
+    </GridPane>
+
+    <Label fx:id="modelDescription" wrapText="true" minHeight="36.0"/>
+
+    <VBox spacing="4.0">
+        <Label fx:id="statusLabel" text="%ui.status.idle"/>
+        <ProgressBar fx:id="progressBar" maxWidth="Infinity" progress="0.0"/>
+    </VBox>
+
+    <HBox spacing="8.0" alignment="CENTER_RIGHT">
+        <Region HBox.hgrow="ALWAYS"/>
+        <Button fx:id="runButton" text="%ui.run" onAction="#onRun" defaultButton="true"/>
+        <Button fx:id="cancelButton" text="%ui.cancel" onAction="#onCancel" disable="true"/>
+    </HBox>
+</VBox>

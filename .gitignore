@@ -1,0 +1,32 @@
+# Gradle
+build/
+.gradle/
+gradle.properties
+.gradletasknamecache
+
+# IntelliJ / IDE
+.idea/
+*.iml
+out/
+.vscode/
+
+# Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python sidecar
+python/build/
+python/dist/
+python/*.egg-info/
+**/__pycache__/
+**/*.pyc
+.venv/
+
+# QuPath logs
+QuPath-*.log

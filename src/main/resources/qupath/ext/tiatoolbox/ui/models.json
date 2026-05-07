@@ -1,0 +1,40 @@
+[
+  {
+    "name": "resnet18-kather100k",
+    "engine": "patch_predictor",
+    "task": "Patch classification",
+    "description": "Colorectal tissue type classification (9 classes) at 0.5 mpp, 224x224 patches.",
+    "classes": [
+      "Adipose",
+      "Ignore*",
+      "Necrosis",
+      "Immune cells",
+      "Mucus",
+      "Smooth muscle",
+      "Normal mucosa",
+      "Stroma",
+      "Tumor"
+    ]
+  },
+  {
+    "name": "fcn-tissue_mask",
+    "engine": "semantic_segmentor",
+    "task": "Semantic segmentation",
+    "description": "Tissue mask (foreground/background) at ~2.0 mpp.",
+    "classes": ["Background", "Tissue"]
+  },
+  {
+    "name": "hovernet_fast-pannuke",
+    "engine": "multi_task_segmentor",
+    "task": "Nucleus instance segmentation",
+    "description": "HoVerNet trained on PanNuke; nucleus polygons + 6 type classes.",
+    "classes": [
+      "Background",
+      "Tumor",
+      "Immune cells",
+      "Connective tissue",
+      "Necrosis",
+      "Epithelium"
+    ]
+  }
+]
