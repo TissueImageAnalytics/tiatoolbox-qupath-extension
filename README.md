@@ -1,12 +1,15 @@
 # tiatoolbox-qupath-extension
 
 A QuPath extension that runs [TIAToolbox](https://github.com/tissueimageanalytics/tiatoolbox)
-inference engines from inside QuPath. Click a button, pick a model, get
-annotations on the image.
+inference engines from inside QuPath. Inference is performed by tiatoolbox's
+Python engines; the extension provides the QuPath-side UI, manages a Python
+sidecar process, and imports the resulting annotations into the open image.
 
 ## Architecture
 
-Two pieces, one click:
+The project has two halves: a Java extension that runs in QuPath, and a Python
+sidecar that wraps the tiatoolbox engines. They communicate over
+[Py4J](https://www.py4j.org/) using its `ClientServer` mode.
 
 ```
 ┌──────────── QuPath (JVM) ─────────┐  Py4J   ┌──── Python sidecar ────┐
@@ -17,22 +20,23 @@ Two pieces, one click:
 └───────────────────────────────────┘         └────────────────────────┘
 ```
 
-The extension spawns the Python sidecar as a child process, talks to it over
-[Py4J](https://www.py4j.org/) (`ClientServer` mode), and imports the engine's
-GeoJSON output into the QuPath hierarchy. No Groovy, no REST, no terminals.
+When the user runs a model, the extension launches the Python sidecar as a
+child process, opens a Py4J connection to it, and sends a JSON request
+describing the model and slide. The sidecar invokes the matching tiatoolbox
+engine with `output_type="qupath"`, which writes a GeoJSON file. The extension
+reads that file and adds the objects to the QuPath hierarchy.
 
 ## Requirements
 
-- **QuPath 0.7.0** or compatible.
-- **Python 3.10+** in a Conda or venv environment with:
-  - `tiatoolbox >= 2.0.1`
-  - `py4j >= 0.10.9.7`
-- **JDK 21+** — only required to *build* the extension. End users only need
-  QuPath (which ships its own JRE).
+- QuPath 0.7.0 or compatible.
+- A Python 3.10+ environment containing `tiatoolbox >= 2.0.1` and
+  `py4j >= 0.10.9.7`.
+- JDK 21+, but only to build the extension. End users do not need a JDK
+  installed; QuPath ships its own JRE.
 
-## Install
+## Installation
 
-### 1. Set up a Python environment
+### 1. Set up the Python environment
 
 ```bash
 conda create -n tiatoolboxv2 python=3.10 -y
@@ -41,26 +45,28 @@ pip install tiatoolbox==2.0.1 py4j==0.10.9.7
 pip install -e ./python   # installs the qupath-tiatoolbox sidecar
 ```
 
-> The sidecar is a tiny pure-Python package; the heavy lifting is done by the
-> tiatoolbox engines you already have installed.
+The sidecar package itself is small; tiatoolbox provides the engines and
+pretrained models.
 
-### 2. Build the QuPath jar
+### 2. Build the extension JAR
 
 ```bash
 ./gradlew clean jar
 # → build/libs/qupath-extension-tiatoolbox-0.1.0.jar
 ```
 
-### 3. Drop the jar into QuPath
+### 3. Install the JAR into QuPath
 
-```bash
-mkdir -p "<QuPath dir>/extensions/catalogs/Manual/TIAToolbox extension/v0.1.0/main-jar"
-cp build/libs/qupath-extension-tiatoolbox-0.1.0.jar \
-  "<QuPath dir>/extensions/catalogs/Manual/TIAToolbox extension/v0.1.0/main-jar/"
+QuPath 0.7 loads extensions from `<QuPath dir>/extensions/catalogs`, and only
+those listed in `registry.json` are picked up. For a developer install, place
+the JAR at:
+
+```
+<QuPath dir>/extensions/catalogs/Manual/TIAToolbox extension/v0.1.0/main-jar/
 ```
 
-QuPath 0.7 only loads extensions registered in its `registry.json`. Add a
-`Manual` catalog entry to `<QuPath dir>/extensions/catalogs/registry.json`:
+and add the following entry to
+`<QuPath dir>/extensions/catalogs/registry.json` under `catalogs`:
 
 ```json
 {
@@ -79,45 +85,48 @@ QuPath 0.7 only loads extensions registered in its `registry.json`. Add a
 }
 ```
 
-(In normal use you would install via QuPath's extension-manager UI; this manual
-path is the developer install.)
+End users would normally install via QuPath's extension-manager UI; the path
+above is the manual developer install.
 
 ## Usage
 
 1. Open a whole-slide image in QuPath.
-2. **Extensions → TIAToolbox → Run TIAToolbox…**
-3. First time only: set the path to your conda env's Python in the dialog
-   (e.g. `/path/to/anaconda3/envs/tiatoolboxv2/bin/python`).
-4. Pick a model, pick a device (cpu / cuda / mps), set a batch size, click **Run**.
+2. Select **Extensions → TIAToolbox → Run TIAToolbox…**
+3. On first use, set the path to the Python interpreter from the conda
+   environment created above (for example
+   `/path/to/anaconda3/envs/tiatoolboxv2/bin/python`). This setting is
+   persisted across sessions.
+4. Choose a model and device (`cpu`, `cuda`, or `mps`), adjust batch size if
+   needed, and click **Run**.
 
-The extension launches the Python sidecar in the background, runs the engine on
-your slide, and imports the resulting GeoJSON as annotations or detections.
-First run will download the pretrained weights from HuggingFace
-(`TIACentre/TIAToolbox_pretrained_weights`).
+The first run for a given model will download its pretrained weights from
+the HuggingFace repository `TIACentre/TIAToolbox_pretrained_weights`. Once
+inference completes, the resulting annotations are imported into the active
+image's hierarchy.
 
-### Models shipped in v1
+### Models included
 
 | Model | Engine | Output |
-|---|---|---|
-| `resnet18-kather100k` | PatchPredictor | Tile-level colorectal tissue classification (9 classes) |
-| `fcn-tissue_mask` | SemanticSegmentor | Tissue / background mask |
-| `hovernet_fast-pannuke` | MultiTaskSegmentor | Per-nucleus polygons + 6 type classes (PanNuke) |
+|-------|--------|--------|
+| `resnet18-kather100k` | PatchPredictor | Patch-level colorectal tissue classification (9 classes). |
+| `fcn-tissue_mask` | SemanticSegmentor | Foreground tissue / background mask. |
+| `hovernet_fast-pannuke` | MultiTaskSegmentor | Per-nucleus polygons with 6 type classes (PanNuke). |
 
-To add more models, edit
-`src/main/resources/qupath/ext/tiatoolbox/ui/models.json` and rebuild.
+To add or remove models, edit
+`src/main/resources/qupath/ext/tiatoolbox/ui/models.json` and rebuild the JAR.
 
-## Repo layout
+## Repository layout
 
 ```
 .
 ├── build.gradle.kts                    # Java/Gradle build
 ├── settings.gradle.kts
-├── gradle/                              # gradle wrapper
+├── gradle/                             # Gradle wrapper
 ├── src/main/
 │   ├── java/qupath/ext/tiatoolbox/
-│   │   ├── TIAToolboxExtension.java         # entry point
-│   │   ├── core/                            # bridge, prefs-free utilities
-│   │   │   ├── TiaRunner.java               # mirrors Python TIATask
+│   │   ├── TIAToolboxExtension.java         # extension entry point
+│   │   ├── core/                            # bridge and import logic
+│   │   │   ├── TiaRunner.java               # mirrors the Python TIATask interface
 │   │   │   ├── ProgressListener.java
 │   │   │   ├── InferenceRequest.java
 │   │   │   ├── InferenceResponse.java
@@ -133,7 +142,7 @@ To add more models, edit
 │       ├── META-INF/services/qupath.lib.gui.extensions.QuPathExtension
 │       └── qupath/ext/tiatoolbox/ui/{tiatoolbox_control.fxml, strings.properties, models.json}
 └── python/
-    ├── pyproject.toml                       # name: qupath-tiatoolbox
+    ├── pyproject.toml                       # qupath-tiatoolbox package
     └── src/qupath_tiatoolbox/
         ├── __init__.py
         ├── __main__.py                      # python -m qupath_tiatoolbox
@@ -143,37 +152,44 @@ To add more models, edit
 
 ## Wire protocol
 
-Java sends a JSON request, Python returns a JSON response. The contract lives
-in `InferenceRequest.java` / `InferenceResponse.java` (Java) and
-`runners.run_engine` (Python).
+The Java side sends a JSON request to the Python sidecar and receives a JSON
+response. The contract is defined by `InferenceRequest.java` /
+`InferenceResponse.java` on the Java side and `runners.run_engine` on the
+Python side.
 
 ```jsonc
 // request
 {
-  "engine": "patch_predictor",          // | "semantic_segmentor" | "multi_task_segmentor"
+  "engine": "patch_predictor",          // also: "semantic_segmentor", "multi_task_segmentor"
   "model":  "resnet18-kather100k",
   "wsi_path": "/abs/path/to/slide.svs",
   "save_dir": "/tmp/tia-{uuid}",
   "device":   "cpu",
   "batch_size": 8,
-  "num_workers": 0
+  "num_workers": 0,
+  "classes": ["Adipose", "Ignore*", "..."]
 }
+
 // response
 { "status": "ok",    "geojson": ["/tmp/tia-{uuid}/0.geojson"] }
 { "status": "error", "message": "...", "trace": "..." }
 ```
 
-Progress: while inference runs, Python invokes the Java-side
-`ProgressListener.onHeartbeat(int seconds)` every ~2 seconds and
-`onStatus(String)` at significant transitions.
+While inference is running, the sidecar invokes
+`ProgressListener.onStatus(String)` at significant transitions and
+`ProgressListener.onHeartbeat(int)` roughly every two seconds with the elapsed
+running time.
 
-## Limitations (v1)
+## Current limitations
 
-- Runs on the **whole slide**; ROI-restricted runs not yet supported.
-- Slide must have a real file path on disk (no in-memory or virtual servers).
-- Progress is coarse (engine internals don't expose tile-level progress).
-- One model run at a time per QuPath instance.
+- Inference runs on the entire slide; restricting it to a region of interest
+  is not yet supported.
+- The slide must have a real file path on disk; in-memory and virtual
+  servers are not supported.
+- Progress reporting is coarse, since the underlying engines do not expose
+  tile-level progress.
+- Only one inference run at a time per QuPath instance.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0; see [LICENSE](LICENSE).
