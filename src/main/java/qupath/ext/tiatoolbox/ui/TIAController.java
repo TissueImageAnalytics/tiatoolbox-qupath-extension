@@ -10,6 +10,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
@@ -22,9 +23,14 @@ import qupath.ext.tiatoolbox.core.PythonDetector;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.dialogs.FileChoosers;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.images.ImageData;
+import qupath.lib.projects.ProjectImageEntry;
 
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.ResourceBundle;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -44,6 +50,8 @@ public class TIAController {
     @FXML private ChoiceBox<ModelInfo> modelChoice;
     @FXML private ChoiceBox<String> deviceChoice;
     @FXML private Spinner<Integer> batchSpinner;
+    @FXML private RadioButton scopeCurrent;
+    @FXML private RadioButton scopeProject;
     @FXML private Label modelDescription;
     @FXML private Label statusLabel;
     @FXML private ProgressBar progressBar;
@@ -55,6 +63,9 @@ public class TIAController {
 
     public void setQuPath(QuPathGUI qupath) {
         this.qupath = qupath;
+        // Disable "All project images" when no project is open. The binding
+        // tracks live changes so opening a project mid-dialog enables it.
+        scopeProject.disableProperty().bind(qupath.projectProperty().isNull());
     }
 
     @FXML
@@ -105,17 +116,16 @@ public class TIAController {
 
     @FXML
     private void onRun() {
-        var imageData = qupath.getViewer().getImageData();
-        if (imageData == null) {
-            Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.no-image"));
-            return;
-        }
         if (pythonField.getText().strip().isEmpty()) {
             Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.python-not-set"));
             return;
         }
         var model = modelChoice.getSelectionModel().getSelectedItem();
         if (model == null) {
+            return;
+        }
+        var batch = resolveScope();
+        if (batch == null || batch.isEmpty()) {
             return;
         }
 
@@ -125,37 +135,85 @@ public class TIAController {
                 .batchSize(batchSpinner.getValue())
                 .build();
 
-        var task = inferenceTask(imageData, model, runner);
+        var task = inferenceTask(batch, model, runner);
         currentTask.set(task);
 
         runButton.disableProperty().unbind();
         runButton.disableProperty().set(true);
         cancelButton.setDisable(false);
-        progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+        progressBar.setProgress(0.0);
 
         var th = new Thread(task, "tiatoolbox-run");
         th.setDaemon(true);
         th.start();
     }
 
-    private Task<Integer> inferenceTask(
-            qupath.lib.images.ImageData<java.awt.image.BufferedImage> imageData,
-            ModelInfo model,
-            TIAToolbox runner) {
+    /**
+     * Build the work list from the selected scope radio. Shows an error dialog
+     * and returns {@code null} on a misconfigured scope (no image / no project)
+     * so the caller can bail without running.
+     */
+    private List<BatchEntry> resolveScope() {
+        if (scopeCurrent.isSelected()) {
+            var imageData = qupath.getViewer().getImageData();
+            if (imageData == null) {
+                Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.no-image"));
+                return null;
+            }
+            return List.of(BatchEntry.forActiveViewer(imageData));
+        }
+        var project = qupath.getProject();
+        if (project == null || project.getImageList().isEmpty()) {
+            Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.no-project"));
+            return null;
+        }
+        var entries = new ArrayList<BatchEntry>(project.getImageList().size());
+        for (var entry : project.getImageList()) {
+            entries.add(BatchEntry.forProject(entry));
+        }
+        return entries;
+    }
+
+    private Task<Integer> inferenceTask(List<BatchEntry> entries, ModelInfo model, TIAToolbox runner) {
 
         var listener = new FxProgressListener();
         return new Task<>() {
             @Override
-            protected Integer call() throws Exception {
-                updateMessage(MessageFormat.format(RES.getString("ui.status.starting"), model.name()));
+            protected Integer call() {
                 Platform.runLater(() -> statusLabel.textProperty().bind(messageProperty()));
 
-                listener.bindStatus((s) -> updateMessage(s));
-                listener.bindHeartbeat((sec) -> updateMessage(
-                        String.format(RES.getString("ui.status.heartbeat"), sec)));
+                // Each image prefixes the per-Python listener messages with
+                // its [N/M] label, so heartbeat updates stay readable.
+                final String[] prefix = {""};
+                listener.bindStatus(s -> updateMessage(prefix[0] + s));
+                listener.bindHeartbeat(sec -> updateMessage(
+                        prefix[0] + String.format(RES.getString("ui.status.heartbeat"), sec)));
 
-                updateMessage(MessageFormat.format(RES.getString("ui.status.running"), model.name()));
-                return runner.run(imageData, listener);
+                int totalAdded = 0;
+                int failed = 0;
+                updateProgress(0, entries.size());
+                for (int i = 0; i < entries.size(); i++) {
+                    if (isCancelled()) break;
+                    var entry = entries.get(i);
+                    prefix[0] = entries.size() == 1
+                            ? ""
+                            : String.format("[%d/%d] %s — ", i + 1, entries.size(), entry.name());
+                    updateMessage(prefix[0] + MessageFormat.format(
+                            RES.getString("ui.status.running"), model.name()));
+                    try {
+                        var imageData = entry.load();
+                        totalAdded += runner.run(imageData, listener);
+                        entry.save(imageData);
+                    } catch (Exception e) {
+                        logger.warn("Inference failed on {}", entry.name(), e);
+                        failed++;
+                    }
+                    updateProgress(i + 1, entries.size());
+                }
+                if (failed > 0) {
+                    updateMessage(String.format("Completed with %d failure(s).", failed));
+                }
+                return totalAdded;
             }
 
             @Override
@@ -198,6 +256,38 @@ public class TIAController {
 
     private Window window() {
         return runButton.getScene().getWindow();
+    }
+
+    /**
+     * One unit of batch work: a way to load an {@link ImageData}, run on it,
+     * and (for project entries) save the modified hierarchy back. The active
+     * viewer's image needs no save — its hierarchy is already live.
+     */
+    private interface BatchEntry {
+        String name();
+        ImageData<BufferedImage> load() throws Exception;
+        void save(ImageData<BufferedImage> data) throws Exception;
+
+        static BatchEntry forActiveViewer(ImageData<BufferedImage> imageData) {
+            var name = imageData.getServer().getMetadata().getName();
+            return new BatchEntry() {
+                @Override public String name() { return name; }
+                @Override public ImageData<BufferedImage> load() { return imageData; }
+                @Override public void save(ImageData<BufferedImage> data) { /* live in viewer */ }
+            };
+        }
+
+        static BatchEntry forProject(ProjectImageEntry<BufferedImage> entry) {
+            return new BatchEntry() {
+                @Override public String name() { return entry.getImageName(); }
+                @Override public ImageData<BufferedImage> load() throws Exception {
+                    return entry.readImageData();
+                }
+                @Override public void save(ImageData<BufferedImage> data) throws Exception {
+                    entry.saveImageData(data);
+                }
+            };
+        }
     }
 
     /**

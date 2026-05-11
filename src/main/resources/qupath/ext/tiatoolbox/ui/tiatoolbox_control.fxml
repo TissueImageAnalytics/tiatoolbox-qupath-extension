@@ -5,8 +5,10 @@
 <?import javafx.scene.control.ChoiceBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.control.RadioButton?>
 <?import javafx.scene.control.Spinner?>
 <?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.ToggleGroup?>
 <?import javafx.scene.control.Tooltip?>
 <?import javafx.scene.layout.ColumnConstraints?>
 <?import javafx.scene.layout.GridPane?>
@@ -52,6 +54,17 @@
     </GridPane>
 
     <Label fx:id="modelDescription" wrapText="true" minHeight="36.0"/>
+
+    <HBox spacing="12.0" alignment="CENTER_LEFT">
+        <Label text="%ui.scope"/>
+        <fx:define>
+            <ToggleGroup fx:id="scopeGroup"/>
+        </fx:define>
+        <RadioButton fx:id="scopeCurrent" text="%ui.scope.current"
+                     selected="true" toggleGroup="$scopeGroup"/>
+        <RadioButton fx:id="scopeProject" text="%ui.scope.project"
+                     toggleGroup="$scopeGroup"/>
+    </HBox>
 
     <VBox spacing="4.0">
         <Label fx:id="statusLabel" text="%ui.status.idle"/>
