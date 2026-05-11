@@ -20,6 +20,7 @@ import qupath.ext.tiatoolbox.core.BridgeManager;
 import qupath.ext.tiatoolbox.core.InferenceRequest;
 import qupath.ext.tiatoolbox.core.InferenceResponse;
 import qupath.ext.tiatoolbox.core.ProgressListener;
+import qupath.ext.tiatoolbox.core.PythonDetector;
 import qupath.ext.tiatoolbox.core.ResultImporter;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.dialogs.FileChoosers;
@@ -76,6 +77,12 @@ public class TIAController {
         TIAPrefs.batchSize.bind(batchSpinner.valueProperty());
 
         pythonField.setText(TIAPrefs.pythonExecutable.get());
+        if (pythonField.getText() == null || pythonField.getText().isBlank()) {
+            var detected = PythonDetector.detect();
+            if (detected != null) {
+                pythonField.setText(detected.toString());
+            }
+        }
         TIAPrefs.pythonExecutable.bind(pythonField.textProperty());
 
         runButton.disableProperty().bind(

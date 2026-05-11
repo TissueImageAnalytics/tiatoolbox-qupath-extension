@@ -39,8 +39,8 @@ reads that file and adds the objects to the QuPath hierarchy.
 ### 1. Set up the Python environment
 
 ```bash
-conda create -n tiatoolboxv2 python=3.10 -y
-conda activate tiatoolboxv2
+conda create -n tiatoolbox-qupath python=3.10 -y
+conda activate tiatoolbox-qupath
 pip install tiatoolbox==2.0.1 py4j==0.10.9.7
 pip install -e ./python   # installs the qupath-tiatoolbox sidecar
 ```
@@ -94,7 +94,7 @@ above is the manual developer install.
 2. Select **Extensions → TIAToolbox → Run TIAToolbox…**
 3. On first use, set the path to the Python interpreter from the conda
    environment created above (for example
-   `/path/to/anaconda3/envs/tiatoolboxv2/bin/python`). This setting is
+   `/path/to/anaconda3/envs/tiatoolbox-qupath/bin/python`). This setting is
    persisted across sessions.
 4. Choose a model and device (`cpu`, `cuda`, or `mps`), adjust batch size if
    needed, and click **Run**.
