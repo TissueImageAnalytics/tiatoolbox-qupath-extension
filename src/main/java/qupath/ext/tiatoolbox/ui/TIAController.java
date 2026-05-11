@@ -16,26 +16,23 @@ import javafx.scene.control.TextField;
 import javafx.stage.Window;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import qupath.ext.tiatoolbox.core.BridgeManager;
-import qupath.ext.tiatoolbox.core.InferenceRequest;
-import qupath.ext.tiatoolbox.core.InferenceResponse;
+import qupath.ext.tiatoolbox.TIAToolbox;
 import qupath.ext.tiatoolbox.core.ProgressListener;
 import qupath.ext.tiatoolbox.core.PythonDetector;
-import qupath.ext.tiatoolbox.core.ResultImporter;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.dialogs.FileChoosers;
 import qupath.lib.gui.QuPathGUI;
 
 import java.io.File;
-import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.text.MessageFormat;
 import java.util.ResourceBundle;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Backs {@code tiatoolbox_control.fxml}. Wires UI state, prefs, and the bridge. */
+/**
+ * Backs {@code tiatoolbox_control.fxml}. Wires UI state, prefs, and the
+ * inference call. The heavy lifting now lives in {@link TIAToolbox}; this
+ * controller only collects parameters and binds JavaFX progress updates.
+ */
 public class TIAController {
 
     private static final Logger logger = LoggerFactory.getLogger(TIAController.class);
@@ -54,7 +51,6 @@ public class TIAController {
     @FXML private Button cancelButton;
 
     private QuPathGUI qupath;
-    private BridgeManager bridge;
     private final AtomicReference<Task<Integer>> currentTask = new AtomicReference<>();
 
     public void setQuPath(QuPathGUI qupath) {
@@ -114,13 +110,7 @@ public class TIAController {
             Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.no-image"));
             return;
         }
-        var wsiPath = filePathOf(imageData.getServer().getURIs().stream().findFirst().orElse(null));
-        if (wsiPath == null) {
-            Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.no-image-path"));
-            return;
-        }
-        var python = pythonField.getText().strip();
-        if (python.isEmpty()) {
+        if (pythonField.getText().strip().isEmpty()) {
             Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.python-not-set"));
             return;
         }
@@ -129,24 +119,13 @@ public class TIAController {
             return;
         }
 
-        Path saveDir;
-        try {
-            saveDir = Files.createTempDirectory("tiatoolbox-" + UUID.randomUUID());
-        } catch (Exception e) {
-            Dialogs.showErrorMessage(RES.getString("title"), e);
-            return;
-        }
+        var runner = TIAToolbox.builder()
+                .model(model.name())
+                .device(deviceChoice.getValue())
+                .batchSize(batchSpinner.getValue())
+                .build();
 
-        if (bridge == null) {
-            bridge = new BridgeManager(Path.of(python));
-        }
-
-        var request = new InferenceRequest(
-                model.engine(), model.name(), wsiPath.toAbsolutePath().toString(),
-                saveDir.toAbsolutePath().toString(),
-                deviceChoice.getValue(), batchSpinner.getValue(), 0, model.classes());
-
-        var task = inferenceTask(imageData, model, request);
+        var task = inferenceTask(imageData, model, runner);
         currentTask.set(task);
 
         runButton.disableProperty().unbind();
@@ -162,7 +141,7 @@ public class TIAController {
     private Task<Integer> inferenceTask(
             qupath.lib.images.ImageData<java.awt.image.BufferedImage> imageData,
             ModelInfo model,
-            InferenceRequest request) {
+            TIAToolbox runner) {
 
         var listener = new FxProgressListener();
         return new Task<>() {
@@ -175,21 +154,8 @@ public class TIAController {
                 listener.bindHeartbeat((sec) -> updateMessage(
                         String.format(RES.getString("ui.status.heartbeat"), sec)));
 
-                updateMessage(RES.getString("ui.status.connecting"));
-                var runner = bridge.runner();
-
                 updateMessage(MessageFormat.format(RES.getString("ui.status.running"), model.name()));
-                var responseJson = runner.runInference(request.toJson(), listener);
-
-                if (isCancelled()) return 0;
-
-                var response = InferenceResponse.fromJson(responseJson);
-                if (!response.ok()) {
-                    throw new RuntimeException(response.message() == null ? "Inference failed" : response.message());
-                }
-
-                updateMessage(RES.getString("ui.status.importing"));
-                return ResultImporter.importGeoJson(imageData, response.geojson());
+                return runner.run(imageData, listener);
             }
 
             @Override
@@ -232,23 +198,6 @@ public class TIAController {
 
     private Window window() {
         return runButton.getScene().getWindow();
-    }
-
-    private static Path filePathOf(URI uri) {
-        if (uri == null) return null;
-        try {
-            return Path.of(uri);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** Tear down the Python sidecar when the dialog is closed. */
-    public void shutdown() {
-        if (bridge != null) {
-            bridge.close();
-            bridge = null;
-        }
     }
 
     /**

@@ -52,7 +52,9 @@ public final class TIACommand implements Runnable {
         stg.initOwner(qupath.getStage());
         stg.setTitle(RES.getString("title"));
         stg.setScene(new Scene(root));
-        stg.setOnHidden(e -> controller.shutdown());
+        // The Python sidecar is now JVM-wide (owned by TIAToolbox); closing
+        // the dialog leaves it running so subsequent runs and Groovy scripts
+        // don't pay the cold-start cost.
         stg.setResizable(false);
         this.stage = stg;
     }

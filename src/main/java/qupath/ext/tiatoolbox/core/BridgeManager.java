@@ -27,6 +27,11 @@ public final class BridgeManager implements AutoCloseable {
         this.pythonExe = pythonExe;
     }
 
+    /** The Python executable this bridge was started with. */
+    public Path pythonExe() {
+        return pythonExe;
+    }
+
     public synchronized TiaRunner runner() throws Exception {
         if (runner != null && process != null && process.isAlive()) {
             return runner;
