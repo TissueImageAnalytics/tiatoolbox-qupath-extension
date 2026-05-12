@@ -17,6 +17,20 @@
     ]
   },
   {
+    "name": "resnet18-pcam",
+    "engine": "patch_predictor",
+    "task": "Patch classification",
+    "description": "PatchCamelyon binary metastasis classification (tumor vs. negative) at 1.0 mpp, 96x96 patches.",
+    "classes": ["Negative", "Tumor"]
+  },
+  {
+    "name": "resnet34-idars-msi",
+    "engine": "patch_predictor",
+    "task": "Patch classification",
+    "description": "IDaRS microsatellite-instability biomarker prediction (colorectal); 224x224 patches at 1.0 mpp.",
+    "classes": ["MSS", "MSI"]
+  },
+  {
     "name": "fcn-tissue_mask",
     "engine": "semantic_segmentor",
     "task": "Semantic segmentation",
@@ -36,5 +50,12 @@
       "Necrosis",
       "Epithelium"
     ]
+  },
+  {
+    "name": "hovernetplus-oed",
+    "engine": "multi_task_segmentor",
+    "task": "Nucleus instance segmentation",
+    "description": "HoVerNetPlus trained on OED; nuclei + epithelial layer segmentation at 0.5 mpp.",
+    "classes": ["Background", "Other", "Epithelial"]
   }
 ]

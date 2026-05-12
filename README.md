@@ -115,14 +115,19 @@ dialog (persistent across sessions), unless overridden with
 | Model | Engine | Output |
 |-------|--------|--------|
 | `resnet18-kather100k` | PatchPredictor | Patch-level colorectal tissue classification (9 classes). |
+| `resnet18-pcam` | PatchPredictor | Binary lymph-node metastasis classification (tumor vs. negative). |
+| `resnet34-idars-msi` | PatchPredictor | IDaRS microsatellite-instability biomarker prediction (MSS / MSI). |
 | `fcn-tissue_mask` | SemanticSegmentor | Foreground tissue / background mask. |
 | `hovernet_fast-pannuke` | MultiTaskSegmentor | Per-nucleus polygons with 6 type classes (PanNuke). |
+| `hovernetplus-oed` | MultiTaskSegmentor | Nuclei + epithelial layer segmentation, OED dataset. |
 
+The list is curated from tiatoolbox's
+[`pretrained_model.yaml`](https://github.com/TissueImageAnalytics/tiatoolbox/blob/master/tiatoolbox/data/pretrained_model.yaml).
 To add or remove models, edit
 [`src/main/resources/qupath/ext/tiatoolbox/ui/models.json`](src/main/resources/qupath/ext/tiatoolbox/ui/models.json)
-and rebuild the JAR. Any pretrained model accepted by the corresponding
-tiatoolbox engine works (see `PatchPredictor`, `SemanticSegmentor`,
-`MultiTaskSegmentor`).
+and rebuild the JAR. Any pretrained
+model accepted by the corresponding tiatoolbox engine works (see
+`PatchPredictor`, `SemanticSegmentor`, `MultiTaskSegmentor`).
 
 
 
