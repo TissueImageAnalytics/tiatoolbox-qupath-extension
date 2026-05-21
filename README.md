@@ -53,7 +53,7 @@ Add the JAR into QuPath using whichever you prefer:
 In any conda flavour (Anaconda, Miniconda, Miniforge, Mambaforge):
 
 ```bash
-conda create -n tiatoolbox-qupath python=3.10 -y
+conda create -n tiatoolbox-qupath "python>=3.11,<=3.14" -y
 conda activate tiatoolbox-qupath
 pip install "tiatoolbox>=2.0.1" "py4j>=0.10.9.7"
 pip install -e ./python   # installs the qupath-tiatoolbox sidecar

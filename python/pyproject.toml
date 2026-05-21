@@ -7,7 +7,7 @@ name = "qupath-tiatoolbox"
 version = "0.2.0"
 description = "Python sidecar for the TIAToolbox QuPath extension. Bridges QuPath (Java) to tiatoolbox engines via Py4J."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<=3.14"
 license = { text = "Apache-2.0" }
 authors = [{ name = "tiatoolbox-qupath-extension contributors" }]
 dependencies = [
