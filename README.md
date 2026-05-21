@@ -9,7 +9,7 @@ the open image.
 ## Requirements
 
 - QuPath 0.7.0 or compatible.
-- A Python 3.10+ environment named `tiatoolbox-qupath` containing
+- A Python 3.11+ environment named `tiatoolbox-qupath` containing
   `tiatoolbox >= 2.0.1` and `py4j >= 0.10.9.7`. Other env names work but the
   extension will auto-detect this one by default.
 - JDK 21+ — only required to **build** the extension. End users do not need
