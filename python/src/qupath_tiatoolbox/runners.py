@@ -35,6 +35,13 @@ _ENGINES: dict[str, _EngineSpec] = {
     "multi_task_segmentor": _EngineSpec(
         "tiatoolbox.models.engine.multi_task_segmentor", "MultiTaskSegmentor"
     ),
+    "nucleus_detector": _EngineSpec(
+        "tiatoolbox.models.engine.nucleus_detector", "NucleusDetector"
+    ),
+    "nucleus_instance_segmentor": _EngineSpec(
+        "tiatoolbox.models.engine.nucleus_instance_segmentor",
+        "NucleusInstanceSegmentor",
+    ),
 }
 
 

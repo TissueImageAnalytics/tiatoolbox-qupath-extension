@@ -107,6 +107,9 @@ available for batch loops. The Python path used is the uv-managed runtime
 installed by the extension, unless overridden with `.pythonExecutable(...)`
 on the builder.
 
+If you want to call a TIAToolbox engine directly, the bridge now also accepts
+`nucleus_detector` and `nucleus_instance_segmentor` via `.engine(...)`.
+
 ### Models included
 
 | Model | Engine | Output |
