@@ -5,6 +5,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.tiatoolbox.ui.RuntimeInstallCommand;
 import qupath.ext.tiatoolbox.ui.TIACommand;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.Version;
@@ -55,6 +56,11 @@ public class TIAToolboxExtension implements QuPathExtension, GitHubProject {
         var command = new TIACommand(qupath);
         runItem.setOnAction(e -> command.run());
         menu.getItems().add(runItem);
+
+        var installItem = new MenuItem(RES.getString("menu.install-runtime"));
+        var installCommand = new RuntimeInstallCommand(qupath);
+        installItem.setOnAction(e -> installCommand.run());
+        menu.getItems().add(installItem);
 
         menu.getItems().add(new SeparatorMenuItem());
 

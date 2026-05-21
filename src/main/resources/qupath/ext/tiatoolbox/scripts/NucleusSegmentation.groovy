@@ -6,7 +6,8 @@
  *
  * Prerequisites:
  *   1. Open a whole-slide image in the active viewer.
- *   2. Set the Python interpreter once via the Run TIAToolbox… dialog.
+ *   2. Install the Python runtime once via Extensions → TIAToolbox →
+ *      Install Python runtime…
  */
 
 import qupath.ext.tiatoolbox.TIAToolbox

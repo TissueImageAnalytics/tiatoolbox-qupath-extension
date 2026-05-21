@@ -7,6 +7,7 @@ import qupath.ext.tiatoolbox.core.InferenceRequest;
 import qupath.ext.tiatoolbox.core.InferenceResponse;
 import qupath.ext.tiatoolbox.core.ProgressListener;
 import qupath.ext.tiatoolbox.core.ResultImporter;
+import qupath.ext.tiatoolbox.install.RuntimePaths;
 import qupath.ext.tiatoolbox.ui.ModelInfo;
 import qupath.ext.tiatoolbox.ui.TIAPrefs;
 import qupath.lib.images.ImageData;
@@ -152,8 +153,8 @@ public final class TIAToolbox {
         public Builder classes(List<String> classes) { this.classes = classes; return this; }
 
         /**
-         * Override the Python executable. Defaults to
-         * {@link TIAPrefs#pythonExecutable} (set via the GUI dialog).
+         * Override the bundled runtime Python. Most users should install the
+         * runtime from the GUI and leave this unset.
          */
         public Builder pythonExecutable(String pythonExecutable) {
             this.pythonExecutable = pythonExecutable;
@@ -258,14 +259,15 @@ public final class TIAToolbox {
     // -- Helpers --------------------------------------------------------------
 
     private Path resolvePythonExe() {
-        var p = pythonExecutableOverride != null
-                ? pythonExecutableOverride
-                : TIAPrefs.pythonExecutable.get();
-        if (p == null || p.isBlank())
+        if (pythonExecutableOverride != null && !pythonExecutableOverride.isBlank()) {
+            return Path.of(pythonExecutableOverride);
+        }
+        var p = RuntimePaths.installedPython();
+        if (p == null)
             throw new IllegalStateException(
-                    "Python executable not configured. Set it in the TIAToolbox dialog "
-                            + "or via .pythonExecutable(...) on the builder.");
-        return Path.of(p);
+                    "Python runtime not installed. Use Extensions → TIAToolbox → "
+                            + "Install Python runtime…");
+        return p;
     }
 
     private static Path filePathOf(ImageData<BufferedImage> imageData) {

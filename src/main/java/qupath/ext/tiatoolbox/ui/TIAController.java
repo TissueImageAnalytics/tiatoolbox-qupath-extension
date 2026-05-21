@@ -13,21 +13,18 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
-import javafx.scene.control.TextField;
-import javafx.stage.Window;
+import javafx.scene.layout.HBox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.tiatoolbox.TIAToolbox;
 import qupath.ext.tiatoolbox.core.ProgressListener;
-import qupath.ext.tiatoolbox.core.PythonDetector;
+import qupath.ext.tiatoolbox.install.RuntimePaths;
 import qupath.fx.dialogs.Dialogs;
-import qupath.fx.dialogs.FileChoosers;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
 import qupath.lib.projects.ProjectImageEntry;
 
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,8 +42,7 @@ public class TIAController {
     private static final ResourceBundle RES =
             ResourceBundle.getBundle("qupath.ext.tiatoolbox.ui.strings");
 
-    @FXML private TextField pythonField;
-    @FXML private Button browseButton;
+    @FXML private HBox runtimeMissingBox;
     @FXML private ChoiceBox<ModelInfo> modelChoice;
     @FXML private ChoiceBox<String> deviceChoice;
     @FXML private Spinner<Integer> batchSpinner;
@@ -59,10 +55,12 @@ public class TIAController {
     @FXML private Button cancelButton;
 
     private QuPathGUI qupath;
+    private RuntimeInstallCommand runtimeInstallCommand;
     private final AtomicReference<Task<Integer>> currentTask = new AtomicReference<>();
 
     public void setQuPath(QuPathGUI qupath) {
         this.qupath = qupath;
+        this.runtimeInstallCommand = new RuntimeInstallCommand(qupath, this::refreshRuntimeBanner);
         // Disable "All project images" when no project is open. The binding
         // tracks live changes so opening a project mid-dialog enables it.
         scopeProject.disableProperty().bind(qupath.projectProperty().isNull());
@@ -83,27 +81,32 @@ public class TIAController {
                 new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 256, TIAPrefs.batchSize.get()));
         TIAPrefs.batchSize.bind(batchSpinner.valueProperty());
 
-        pythonField.setText(TIAPrefs.pythonExecutable.get());
-        if (pythonField.getText() == null || pythonField.getText().isBlank()) {
-            var detected = PythonDetector.detect();
-            if (detected != null) {
-                pythonField.setText(detected.toString());
-            }
-        }
-        TIAPrefs.pythonExecutable.bind(pythonField.textProperty());
+        refreshRuntimeBanner();
+    }
 
-        runButton.disableProperty().bind(
-                Bindings.isNull(modelChoice.getSelectionModel().selectedItemProperty())
-                        .or(Bindings.isEmpty(pythonField.textProperty())));
+    /** Show or hide the "runtime not installed" banner and wire Run availability. */
+    private void refreshRuntimeBanner() {
+        var runtimeReady = RuntimePaths.installedPython() != null;
+        runtimeMissingBox.setVisible(!runtimeReady);
+        runtimeMissingBox.setManaged(!runtimeReady);
+
+        runButton.disableProperty().unbind();
+        if (!runtimeReady) {
+            runButton.setDisable(true);
+        } else {
+            runButton.disableProperty().bind(
+                    Bindings.isNull(modelChoice.getSelectionModel().selectedItemProperty()));
+        }
     }
 
     @FXML
-    private void onBrowsePython() {
-        var startDir = pythonField.getText().isBlank() ? null : new File(pythonField.getText()).getParentFile();
-        File chosen = FileChoosers.promptForFile(window(), RES.getString("ui.python-exe"), startDir);
-        if (chosen != null) {
-            pythonField.setText(chosen.getAbsolutePath());
-        }
+    private void onOpenInstaller() {
+        if (runtimeInstallCommand == null) return;
+        runtimeInstallCommand.run();
+        // The installer runs asynchronously; re-check banner state next time
+        // the user reopens the dialog. As a courtesy, refresh now too — the
+        // banner will continue to show until the install completes.
+        refreshRuntimeBanner();
     }
 
     @FXML
@@ -116,8 +119,9 @@ public class TIAController {
 
     @FXML
     private void onRun() {
-        if (pythonField.getText().strip().isEmpty()) {
+        if (RuntimePaths.installedPython() == null) {
             Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.python-not-set"));
+            refreshRuntimeBanner();
             return;
         }
         var model = modelChoice.getSelectionModel().getSelectedItem();
@@ -249,13 +253,7 @@ public class TIAController {
     private void resetButtons() {
         currentTask.set(null);
         cancelButton.setDisable(true);
-        runButton.disableProperty().bind(
-                Bindings.isNull(modelChoice.getSelectionModel().selectedItemProperty())
-                        .or(Bindings.isEmpty(pythonField.textProperty())));
-    }
-
-    private Window window() {
-        return runButton.getScene().getWindow();
+        refreshRuntimeBanner();
     }
 
     /**

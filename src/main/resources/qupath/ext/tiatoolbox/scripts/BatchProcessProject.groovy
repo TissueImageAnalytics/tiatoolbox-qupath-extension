@@ -7,7 +7,8 @@
  *
  * Prerequisites:
  *   1. A QuPath project must be open.
- *   2. Set the Python interpreter once via the Run TIAToolbox… dialog.
+ *   2. Install the Python runtime once via Extensions → TIAToolbox →
+ *      Install Python runtime…
  */
 
 import qupath.ext.tiatoolbox.TIAToolbox

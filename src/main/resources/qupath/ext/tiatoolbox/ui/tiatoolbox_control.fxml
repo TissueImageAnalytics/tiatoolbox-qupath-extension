@@ -7,7 +7,6 @@
 <?import javafx.scene.control.ProgressBar?>
 <?import javafx.scene.control.RadioButton?>
 <?import javafx.scene.control.Spinner?>
-<?import javafx.scene.control.TextField?>
 <?import javafx.scene.control.ToggleGroup?>
 <?import javafx.scene.control.Tooltip?>
 <?import javafx.scene.layout.ColumnConstraints?>
@@ -23,6 +22,16 @@
       spacing="10.0" prefWidth="480.0">
     <padding><Insets top="14" right="14" bottom="14" left="14"/></padding>
 
+    <HBox fx:id="runtimeMissingBox" spacing="8.0" alignment="CENTER_LEFT"
+          visible="false" managed="false"
+          style="-fx-background-color: #fff7e0; -fx-border-color: #d68a00; -fx-border-radius: 4; -fx-background-radius: 4;">
+        <padding><Insets top="8" right="10" bottom="8" left="10"/></padding>
+        <Label text="%runtime.missing.message" wrapText="true" HBox.hgrow="ALWAYS"
+               style="-fx-text-fill: #3f2a00;"/>
+        <Button text="%runtime.missing.button" onAction="#onOpenInstaller"
+                style="-fx-background-color: #8a5a00; -fx-text-fill: white; -fx-font-weight: bold;"/>
+    </HBox>
+
     <GridPane hgap="8.0" vgap="6.0">
         <columnConstraints>
             <ColumnConstraints minWidth="120.0"/>
@@ -30,25 +39,18 @@
             <ColumnConstraints minWidth="80.0"/>
         </columnConstraints>
         <rowConstraints>
-            <RowConstraints/><RowConstraints/><RowConstraints/><RowConstraints/>
+            <RowConstraints/><RowConstraints/><RowConstraints/>
         </rowConstraints>
 
-        <Label text="%ui.python-exe" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
-        <TextField fx:id="pythonField" GridPane.rowIndex="0" GridPane.columnIndex="1">
-            <tooltip><Tooltip text="%ui.python-exe.help"/></tooltip>
-        </TextField>
-        <Button fx:id="browseButton" text="%ui.python-exe.browse"
-                onAction="#onBrowsePython" GridPane.rowIndex="0" GridPane.columnIndex="2"/>
-
-        <Label text="%ui.model" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+        <Label text="%ui.model" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
         <ChoiceBox fx:id="modelChoice" maxWidth="Infinity"
-                   GridPane.rowIndex="1" GridPane.columnIndex="1" GridPane.columnSpan="2"/>
+                   GridPane.rowIndex="0" GridPane.columnIndex="1" GridPane.columnSpan="2"/>
 
-        <Label text="%ui.device" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+        <Label text="%ui.device" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
         <ChoiceBox fx:id="deviceChoice" maxWidth="Infinity"
-                   GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+                   GridPane.rowIndex="1" GridPane.columnIndex="1"/>
         <Spinner fx:id="batchSpinner" editable="true" prefWidth="80.0"
-                 GridPane.rowIndex="2" GridPane.columnIndex="2">
+                 GridPane.rowIndex="1" GridPane.columnIndex="2">
             <tooltip><Tooltip text="%ui.batch-size"/></tooltip>
         </Spinner>
     </GridPane>

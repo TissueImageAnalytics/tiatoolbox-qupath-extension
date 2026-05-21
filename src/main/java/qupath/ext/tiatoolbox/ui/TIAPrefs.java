@@ -7,9 +7,6 @@ import qupath.lib.gui.prefs.PathPrefs;
 /** Persistent extension preferences, backed by QuPath's {@link PathPrefs} store. */
 public final class TIAPrefs {
 
-    public static final StringProperty pythonExecutable =
-            PathPrefs.createPersistentPreference("tiatoolbox.pythonExecutable", "");
-
     public static final StringProperty device =
             PathPrefs.createPersistentPreference("tiatoolbox.device", "cpu");
 

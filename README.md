@@ -8,10 +8,7 @@ the open image.
 
 ## Requirements
 
-- QuPath 0.7.0 or compatible.
-- A Python 3.11+ environment named `tiatoolbox-qupath` containing
-  `tiatoolbox >= 2.0.1` and `py4j >= 0.10.9.7`. Other env names work but the
-  extension will auto-detect this one by default.
+- QuPath 0.6.0 or compatible.
 - JDK 21+ — only required to **build** the extension. End users do not need
   a JDK installed, QuPath ships its own JRE.
 
@@ -28,7 +25,7 @@ Recommended once a release is published. From inside QuPath:
    ```
 3. Find **TIAToolbox extension** in the catalog list and click **Install**.
 
-Then set up the Python environment (see [Python setup](#python-setup) below).
+Then set up the Python runtime (see [Python setup](#python-setup) below).
 
 ### Developers (local build)
 
@@ -45,23 +42,23 @@ Add the JAR into QuPath using whichever you prefer:
 - **Copy** the JAR into the QuPath user-extensions folder. By default this
   is `<QuPath dir>/extensions/` (The exact path is shown under
   **Edit → Preferences → User directory**). 
-  QuPath auto-loads any JAR placed in this folder. Then, restart QuPath.
+  QuPath auto-loads any JAR placed in this folder. 
+  
+Then, restart QuPath.
 
 
 ### Python setup
 
-In any conda flavour (Anaconda, Miniconda, Miniforge, Mambaforge):
+Inside QuPath, click **Extensions → TIAToolbox → Install Python runtime…**
+and press **Install**.
 
-```bash
-conda create -n tiatoolbox-qupath "python>=3.11,<=3.14" -y
-conda activate tiatoolbox-qupath
-pip install "tiatoolbox>=2.1.0" "py4j>=0.10.9.7"
-pip install -e ./python   # installs the qupath-tiatoolbox sidecar
-```
+The wizard sets up an isolated Python environment under your QuPath user
+directory (`<QuPath user dir>/tiatoolbox-runtime/`) using
+[uv](https://github.com/astral-sh/uv). It installs Python, TIAToolbox, and
+the small `qupath-tiatoolbox` sidecar package.
 
-The first time you open the dialog, the extension scans common conda
-locations for an env named `tiatoolbox-qupath` and pre-fills the Python
-path. You can override this via the dialog's **Browse…** button.
+If setup is interrupted, or if you need to refresh the environment after an
+extension update, open the same dialog and click **Re-install**.
 
 ## Usage
 
@@ -106,9 +103,9 @@ TIAToolbox.builder()
 ```
 
 `run(ImageData)` and `run(ImageData, ProgressListener)` overloads are
-available for batch loops. The Python path used is the one configured in the
-dialog (persistent across sessions), unless overridden with
-`.pythonExecutable(...)` on the builder.
+available for batch loops. The Python path used is the uv-managed runtime
+installed by the extension, unless overridden with `.pythonExecutable(...)`
+on the builder.
 
 ### Models included
 
@@ -175,13 +172,17 @@ and adds the objects to the QuPath hierarchy.
 │   │   ├── core/                            # bridge, wire format, and import logic
 │   │   │   ├── BridgeManager.java           # owns the Py4J ClientServer + Python subprocess
 │   │   │   ├── PythonLauncher.java          # spawns `python -m qupath_tiatoolbox`
-│   │   │   ├── PythonDetector.java          # locates the tiatoolbox-qupath conda env
 │   │   │   ├── TiaRunner.java               # Java view of the Python TIATask interface
 │   │   │   ├── InferenceRequest.java        # JSON sent to Python
 │   │   │   ├── InferenceResponse.java       # JSON returned by Python
 │   │   │   ├── ProgressListener.java        # status / heartbeat callbacks (Python → Java)
 │   │   │   └── ResultImporter.java          # GeoJSON → QuPath hierarchy, reapplies PathClass
+│   │   ├── install/                         # uv-managed runtime installation
+│   │   │   ├── RuntimeInstaller.java         # extracts uv/sidecar and runs `uv sync`
+│   │   │   └── RuntimePaths.java             # resolves runtime paths under the QuPath user dir
 │   │   └── ui/                              # JavaFX dialog (scope radios, model picker, progress)
+│   │       ├── RuntimeInstallCommand.java
+│   │       ├── RuntimeInstallController.java
 │   │       ├── TIACommand.java
 │   │       ├── TIAController.java
 │   │       ├── TIAPrefs.java
@@ -193,7 +194,9 @@ and adds the objects to the QuPath hierarchy.
 │           │   ├── PatchClassification.groovy
 │           │   ├── NucleusSegmentation.groovy
 │           │   └── BatchProcessProject.groovy
-│           └── ui/{tiatoolbox_control.fxml, strings.properties, models.json}
+│           └── ui/{tiatoolbox_control.fxml, runtime_install.fxml, strings.properties, models.json}
+├── runtime/
+│   └── pyproject.toml                       # uv-managed runtime environment
 └── python/
     ├── pyproject.toml                       # qupath-tiatoolbox package
     └── src/qupath_tiatoolbox/
