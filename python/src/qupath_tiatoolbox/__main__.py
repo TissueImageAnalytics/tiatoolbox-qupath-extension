@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import signal
 import sys
 import threading
@@ -46,14 +45,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _watch_parent(parent_pid: int, shutdown: threading.Event) -> None:
-    """Exit if the parent process disappears (orphaned subprocess guard)."""
-    while not shutdown.wait(2.0):
-        try:
-            os.kill(parent_pid, 0)
-        except OSError:
-            shutdown.set()
-            return
+def _watch_parent(shutdown: threading.Event) -> None:
+    """
+    Trigger shutdown when the parent process closes stdin.
+    """
+    try:
+        sys.stdin.buffer.read()  # blocks until EOF  # using os.kill(parent_pid, 0) here fails on windows
+    except Exception:
+        pass
+    finally:
+        shutdown.set()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,8 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: shutdown.set())
 
-    parent_pid = os.getppid()
-    threading.Thread(target=_watch_parent, args=(parent_pid, shutdown), daemon=True).start()
+    threading.Thread(target=_watch_parent, args=(shutdown,), daemon=True).start()
 
     shutdown.wait()
     logging.info("Shutting down ClientServer")
