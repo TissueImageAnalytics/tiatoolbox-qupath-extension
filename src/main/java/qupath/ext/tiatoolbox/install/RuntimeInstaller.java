@@ -121,6 +121,9 @@ public final class RuntimeInstaller {
         log.accept("Running: " + String.join(" ", cmd));
 
         var pb = new ProcessBuilder(cmd);
+        pb.environment().remove("PYTHONHOME");
+        pb.environment().remove("PYTHONPATH");
+        pb.environment().put("PYTHONNOUSERSITE", "1");
         pb.environment().put("UV_CACHE_DIR", RuntimePaths.uvCacheDir().toString());
         // uv installs Python via python-build-standalone — store it under our root.
         pb.environment().put("UV_PYTHON_INSTALL_DIR",

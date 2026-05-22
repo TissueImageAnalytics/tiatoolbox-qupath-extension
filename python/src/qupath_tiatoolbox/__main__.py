@@ -13,8 +13,10 @@ parent process dies.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import logging
 import os
+import platform
 import signal
 import sys
 import threading
@@ -22,6 +24,9 @@ import threading
 from py4j.clientserver import ClientServer, JavaParameters, PythonParameters
 
 from .bridge import TIATask
+
+_STILL_ACTIVE = 259
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -46,12 +51,37 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _watch_parent(parent_pid: int, shutdown: threading.Event) -> None:
-    """Exit if the parent process disappears (orphaned subprocess guard)."""
-    while not shutdown.wait(2.0):
+def _parent_alive(parent_pid: int) -> bool:
+    """Return True while the original parent process is still running."""
+    if parent_pid <= 0:
+        return False
+
+    if platform.system() != "Windows":
         try:
             os.kill(parent_pid, 0)
         except OSError:
+            return False
+        return True
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(
+        _PROCESS_QUERY_LIMITED_INFORMATION, False, parent_pid
+    )
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _watch_parent(parent_pid: int, shutdown: threading.Event) -> None:
+    """Exit if the parent process disappears (orphaned subprocess guard)."""
+    while not shutdown.wait(2.0):
+        if not _parent_alive(parent_pid):
             shutdown.set()
             return
 
