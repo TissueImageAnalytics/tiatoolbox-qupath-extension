@@ -81,10 +81,12 @@ HuggingFace repository `TIACentre/TIAToolbox_pretrained_weights`.
 
 ### Scripting
 
-The extension exposes a Groovy-friendly API. Three templates are
+The extension exposes a Groovy-friendly API. Five templates are
 shipped under **Extensions → TIAToolbox → Script templates**:
 
 - **Patch classification**: `resnet18-kather100k` on the current image.
+- **Feature extraction**: `resnet18` feature vectors saved to a zarr store.
+- **Nucleus detection**: `mapde-conic` on the current image.
 - **Nucleus segmentation**: `hovernet_fast-pannuke` on the current image.
 - **Batch process project**: iterates `project.getImageList()` and saves
   each entry's hierarchy.
@@ -109,6 +111,9 @@ on the builder.
 
 If you want to call a TIAToolbox engine directly, the bridge now also accepts
 `nucleus_detector` and `nucleus_instance_segmentor` via `.engine(...)`.
+Feature export is available via `.engine("deep_feature_extractor")` and
+`.export()`, which saves the extracted features to the temporary run folder.
+Use `.run()` for annotation engines and `.export()` for deep feature export.
 
 ### Models included
 
@@ -118,6 +123,8 @@ If you want to call a TIAToolbox engine directly, the bridge now also accepts
 | `resnet18-pcam` | PatchPredictor | Binary lymph-node metastasis classification (tumor vs. negative). |
 | `resnet34-idars-msi` | PatchPredictor | IDaRS microsatellite-instability biomarker prediction (MSS / MSI). |
 | `fcn-tissue_mask` | SemanticSegmentor | Foreground tissue / background mask. |
+| `mapde-conic` | NucleusDetector | CoNIC nucleus detection. |
+| `mapde-crchisto` | NucleusDetector | CRCHisto nucleus detection. |
 | `hovernet_fast-pannuke` | MultiTaskSegmentor | Per-nucleus polygons with 6 type classes (PanNuke). |
 | `hovernetplus-oed` | MultiTaskSegmentor | Nuclei + epithelial layer segmentation, OED dataset. |
 
@@ -127,7 +134,7 @@ To add or remove models, edit
 [`src/main/resources/qupath/ext/tiatoolbox/ui/models.json`](src/main/resources/qupath/ext/tiatoolbox/ui/models.json)
 and rebuild the JAR. Any pretrained
 model accepted by the corresponding tiatoolbox engine works (see
-`PatchPredictor`, `SemanticSegmentor`, `MultiTaskSegmentor`).
+`PatchPredictor`, `SemanticSegmentor`, `NucleusDetector`, `MultiTaskSegmentor`).
 
 
 

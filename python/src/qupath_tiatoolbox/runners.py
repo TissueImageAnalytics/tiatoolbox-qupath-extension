@@ -3,9 +3,10 @@
 Maps an engine name to a tiatoolbox engine class and runs it on a single WSI.
 
 All engines share the EngineABC contract; the only structural difference between
-tasks is which class we instantiate. We always run with ``output_type="qupath"``
-in WSI mode so each input slide produces a GeoJSON file the Java side can import
-directly.
+tasks is which class we instantiate. Annotation engines run with
+``output_type="qupath"`` so each input slide produces a GeoJSON file the Java
+side can import directly. Artifact-export engines can request a different
+output type and return file paths instead.
 """
 
 from __future__ import annotations
@@ -42,6 +43,10 @@ _ENGINES: dict[str, _EngineSpec] = {
         "tiatoolbox.models.engine.nucleus_instance_segmentor",
         "NucleusInstanceSegmentor",
     ),
+    "deep_feature_extractor": _EngineSpec(
+        "tiatoolbox.models.engine.deep_feature_extractor",
+        "DeepFeatureExtractor",
+    ),
 }
 
 
@@ -65,13 +70,15 @@ def run_engine(
     batch_size: int = 8,
     num_workers: int = 0,
     classes: Sequence[str] | None = None,
+    output_type: str = "qupath",
 ) -> dict[str, Any]:
-    """Run one tiatoolbox engine on one WSI and return GeoJSON output paths.
+    """Run one tiatoolbox engine on one WSI and return output file paths.
 
     Returns
     -------
-    dict with keys:
-        ``geojson``: list[str] of output GeoJSON paths (one per input WSI).
+    dict with either:
+        ``geojson``: list[str] of output GeoJSON paths, or
+        ``artifacts``: list[str] of output paths for non-annotation engines.
     """
     EngineCls = _load(engine)
 
@@ -101,17 +108,22 @@ def run_engine(
         patch_mode=False,
         save_dir=str(out_dir),
         overwrite=True,
-        output_type="qupath",
+        output_type=output_type,
     )
 
-    geojsons = _collect_geojson_paths(result, out_dir)
-    logger.info("Engine produced %d GeoJSON file(s): %s", len(geojsons), geojsons)
+    if output_type == "qupath":
+        geojsons = _collect_geojson_paths(result, out_dir)
+        logger.info("Engine produced %d GeoJSON file(s): %s", len(geojsons), geojsons)
 
-    if classes:
-        for p in geojsons:
-            _relabel_geojson_in_place(p, classes)
+        if classes:
+            for p in geojsons:
+                _relabel_geojson_in_place(p, classes)
 
-    return {"geojson": [str(p) for p in geojsons]}
+        return {"geojson": [str(p) for p in geojsons]}
+
+    artifacts = _collect_artifact_paths(result, out_dir)
+    logger.info("Engine produced %d artifact(s): %s", len(artifacts), artifacts)
+    return {"artifacts": [str(p) for p in artifacts]}
 
 
 def _relabel_geojson_in_place(path: Path, classes: Sequence[str]) -> None:
@@ -195,4 +207,32 @@ def _collect_geojson_paths(result: Any, out_dir: Path) -> list[Path]:
     for d in candidate_dirs:
         for suffix in _GEOJSON_SUFFIXES:
             found.extend(d.rglob(f"*{suffix}"))
+    return sorted(set(found))
+
+
+def _collect_artifact_paths(result: Any, out_dir: Path) -> list[Path]:
+    """Normalise artifact output to a list of paths.
+
+    Deep feature extraction writes a zarr store rather than GeoJSON. We accept
+    any existing file or directory reported by tiatoolbox and fall back to the
+    save directory if the engine only populated it on disk.
+    """
+    paths = list(_flatten_paths(result))
+    found = [p for p in paths if p.exists()]
+    if found:
+        return sorted(set(found))
+
+    candidate_dirs = [out_dir]
+    parent = out_dir.parent
+    if parent.exists():
+        prefix = out_dir.name
+        candidate_dirs.extend(
+            d for d in parent.iterdir()
+            if d.is_dir() and d != out_dir and d.name.startswith(prefix)
+        )
+    found = []
+    for d in candidate_dirs:
+        if d.exists():
+            found.append(d)
+            found.extend(p for p in d.iterdir())
     return sorted(set(found))

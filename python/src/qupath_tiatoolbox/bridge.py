@@ -73,6 +73,7 @@ class TIATask:
                 batch_size=int(req.get("batch_size", 8)),
                 num_workers=int(req.get("num_workers", 0)),
                 classes=req.get("classes"),
+                output_type=req.get("output_type", "qupath"),
             )
         except Exception as exc:  # noqa: BLE001 — cross-process boundary
             logger.exception("Inference failed")

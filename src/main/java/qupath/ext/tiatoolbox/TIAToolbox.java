@@ -138,8 +138,9 @@ public final class TIAToolbox {
 
         /**
          * Tiatoolbox engine key — one of {@code patch_predictor},
-         * {@code semantic_segmentor}, {@code multi_task_segmentor}. Only
-         * required for models that aren't in {@code models.json}.
+         * {@code semantic_segmentor}, {@code multi_task_segmentor},
+         * {@code nucleus_detector}, or {@code nucleus_instance_segmentor}.
+         * Only required for models that aren't in {@code models.json}.
          */
         public Builder engine(String engine) { this.engine = engine; return this; }
 
@@ -206,11 +207,65 @@ public final class TIAToolbox {
         return run(imageData, NoOpListener.INSTANCE);
     }
 
+    /** Export model artifacts for the given image and return the saved paths. */
+    public List<Path> export() {
+        if (!"deep_feature_extractor".equals(engine)) {
+            throw new IllegalStateException("export() is only supported for deep_feature_extractor");
+        }
+        var imageData = QP.getCurrentImageData();
+        if (imageData == null)
+            throw new IllegalStateException("No image is open in the active viewer.");
+        return export(imageData);
+    }
+
+    /** Export model artifacts for the given image and return the saved paths. */
+    public List<Path> export(ImageData<BufferedImage> imageData) {
+        return export(imageData, NoOpListener.INSTANCE);
+    }
+
+    /** Export model artifacts for the given image and return the saved paths. */
+    public List<Path> export(ImageData<BufferedImage> imageData, ProgressListener listener) {
+        if (!"deep_feature_extractor".equals(engine)) {
+            throw new IllegalStateException("export() is only supported for deep_feature_extractor");
+        }
+        if (imageData == null)
+            throw new IllegalArgumentException("imageData must not be null");
+
+        var response = invoke(imageData, listener, "zarr");
+        if (!response.ok()) {
+            var msg = response.message() == null ? "Export failed" : response.message();
+            throw new RuntimeException(msg);
+        }
+        if (response.artifacts() == null || response.artifacts().isEmpty()) {
+            return List.of();
+        }
+        return response.artifacts().stream().map(Path::of).toList();
+    }
+
     /**
      * Run on the given image, reporting progress through {@code listener}.
      * Used by the GUI to bridge progress events to the JavaFX status label.
      */
     public int run(ImageData<BufferedImage> imageData, ProgressListener listener) {
+        if ("deep_feature_extractor".equals(engine)) {
+            throw new IllegalStateException("deep_feature_extractor must use export() instead of run()");
+        }
+        var response = invoke(imageData, listener, "qupath");
+        if (!response.ok()) {
+            var msg = response.message() == null ? "Inference failed" : response.message();
+            throw new RuntimeException(msg);
+        }
+        try {
+            return ResultImporter.importGeoJson(imageData, response.geojson());
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to import tiatoolbox results", e);
+        }
+    }
+
+    private InferenceResponse invoke(
+            ImageData<BufferedImage> imageData,
+            ProgressListener listener,
+            String outputType) {
         if (imageData == null)
             throw new IllegalArgumentException("imageData must not be null");
 
@@ -232,7 +287,7 @@ public final class TIAToolbox {
                 engine, model,
                 wsiPath.toAbsolutePath().toString(),
                 saveDir.toAbsolutePath().toString(),
-                device, batchSize, numWorkers, classes);
+            device, batchSize, numWorkers, classes, outputType);
 
         var bridge = acquireBridge(pythonPath);
 
@@ -242,12 +297,7 @@ public final class TIAToolbox {
             try {
                 var runner = bridge.runner();
                 var responseJson = runner.runInference(request.toJson(), listener);
-                var response = InferenceResponse.fromJson(responseJson);
-                if (!response.ok()) {
-                    var msg = response.message() == null ? "Inference failed" : response.message();
-                    throw new RuntimeException(msg);
-                }
-                return ResultImporter.importGeoJson(imageData, response.geojson());
+                return InferenceResponse.fromJson(responseJson);
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {

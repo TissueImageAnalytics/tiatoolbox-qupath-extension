@@ -10,6 +10,7 @@ import java.util.List;
 public record InferenceResponse(
         String status,
         List<String> geojson,
+    List<String> artifacts,
         String message,
         String trace
 ) {

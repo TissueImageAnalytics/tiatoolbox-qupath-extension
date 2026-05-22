@@ -38,6 +38,20 @@
     "classes": ["Background", "Tissue"]
   },
   {
+    "name": "mapde-conic",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "CoNIC nucleus detection at 0.5 mpp.",
+    "classes": []
+  },
+  {
+    "name": "mapde-crchisto",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "CRCHisto nucleus detection at 0.5 mpp.",
+    "classes": []
+  },
+  {
     "name": "hovernet_fast-pannuke",
     "engine": "multi_task_segmentor",
     "task": "Nucleus instance segmentation",
