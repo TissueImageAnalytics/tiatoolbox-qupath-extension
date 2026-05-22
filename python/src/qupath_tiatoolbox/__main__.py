@@ -111,8 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: shutdown.set())
 
-    parent_pid = os.getppid()
-    threading.Thread(target=_watch_parent, args=(parent_pid, shutdown), daemon=True).start()
+    threading.Thread(target=_watch_parent, args=(shutdown,), daemon=True).start()
 
     shutdown.wait()
     logging.info("Shutting down ClientServer")
