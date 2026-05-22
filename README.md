@@ -14,14 +14,14 @@ the open image.
 
 ## Installation
 
-### End users (via the QuPath extension catalog)
+### Recommended (via the QuPath extension catalog)
 
-Recommended once a release is published. From inside QuPath:
+ From inside QuPath:
 
-1. **Extensions → Manage extensions** (the extension-manager UI).
+1. **Extensions → Manage extension catalogs**.
 2. **Add a catalog**, paste the URL of the TIA catalog:
    ```
-   https://github.com/TissueImageAnalytics/qupath-catalog/main/catalog.json
+   https://github.com/TissueImageAnalytics/qupath-catalog
    ```
 3. Find **TIAToolbox extension** in the catalog list and click **Install**.
 
