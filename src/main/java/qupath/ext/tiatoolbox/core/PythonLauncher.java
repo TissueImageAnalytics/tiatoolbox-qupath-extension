@@ -28,7 +28,7 @@ public final class PythonLauncher {
     public record Started(Process process, int port) {}
 
     /**
-     * Start {@code <pythonExe> -m qupath_tiatoolbox --python-port 0} and parse
+     * Start {@code <pythonExe> -I -m qupath_tiatoolbox --python-port 0} and parse
      * the bound port from stdout. The returned {@link Process} owns both stdout
      * and stderr drains — caller must ultimately {@code destroy()} it.
      */

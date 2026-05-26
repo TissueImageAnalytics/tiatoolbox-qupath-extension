@@ -2,7 +2,7 @@
 
 Started as a subprocess by the QuPath extension::
 
-    python -m qupath_tiatoolbox --python-port 25334
+    python -I -m qupath_tiatoolbox --python-port 25334
 
 Boots a Py4J ClientServer with a :class:`TIATask` entry point on the given
 port, prints ``READY port=<N>`` to stdout (the Java side waits for that
@@ -20,6 +20,7 @@ import platform
 import signal
 import sys
 import threading
+from ctypes import wintypes
 
 from py4j.clientserver import ClientServer, JavaParameters, PythonParameters
 
@@ -27,6 +28,24 @@ from .bridge import TIATask
 
 _STILL_ACTIVE = 259
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def _kernel32():
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return kernel32
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -63,14 +82,14 @@ def _parent_alive(parent_pid: int) -> bool:
             return False
         return True
 
-    kernel32 = ctypes.windll.kernel32
+    kernel32 = _kernel32()
     handle = kernel32.OpenProcess(
         _PROCESS_QUERY_LIMITED_INFORMATION, False, parent_pid
     )
     if not handle:
         return False
     try:
-        exit_code = ctypes.c_ulong()
+        exit_code = wintypes.DWORD()
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
             return False
         return exit_code.value == _STILL_ACTIVE
@@ -88,6 +107,7 @@ def _watch_parent(parent_pid: int, shutdown: threading.Event) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    parent_pid = os.getppid()
     logging.basicConfig(
         level=args.log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -111,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: shutdown.set())
 
-    threading.Thread(target=_watch_parent, args=(shutdown,), daemon=True).start()
+    threading.Thread(target=_watch_parent, args=(parent_pid, shutdown), daemon=True).start()
 
     shutdown.wait()
     logging.info("Shutting down ClientServer")
