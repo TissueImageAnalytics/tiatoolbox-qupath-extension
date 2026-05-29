@@ -28,9 +28,10 @@ from .bridge import TIATask
 
 _STILL_ACTIVE = 259
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_IS_WINDOWS = platform.system() == "Windows"
 
 
-def _kernel32():
+def _configure_kernel32():
     kernel32 = ctypes.windll.kernel32
     kernel32.OpenProcess.argtypes = [
         wintypes.DWORD,
@@ -46,6 +47,9 @@ def _kernel32():
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
     return kernel32
+
+
+_KERNEL32 = _configure_kernel32() if _IS_WINDOWS else None
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -75,14 +79,15 @@ def _parent_alive(parent_pid: int) -> bool:
     if parent_pid <= 0:
         return False
 
-    if platform.system() != "Windows":
+    if not _IS_WINDOWS:
         try:
             os.kill(parent_pid, 0)
         except OSError:
             return False
         return True
 
-    kernel32 = _kernel32()
+    kernel32 = _KERNEL32
+    assert kernel32 is not None
     handle = kernel32.OpenProcess(
         _PROCESS_QUERY_LIMITED_INFORMATION, False, parent_pid
     )
