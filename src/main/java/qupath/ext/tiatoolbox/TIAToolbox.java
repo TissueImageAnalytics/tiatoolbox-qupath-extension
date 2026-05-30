@@ -138,8 +138,9 @@ public final class TIAToolbox {
 
         /**
          * Tiatoolbox engine key — one of {@code patch_predictor},
-         * {@code semantic_segmentor}, {@code multi_task_segmentor}. Only
-         * required for models that aren't in {@code models.json}.
+         * {@code semantic_segmentor}, {@code multi_task_segmentor},
+         * {@code nucleus_detector}. Only required for models that aren't in
+         * {@code models.json}.
          */
         public Builder engine(String engine) { this.engine = engine; return this; }
 

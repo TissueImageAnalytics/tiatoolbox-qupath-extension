@@ -81,11 +81,13 @@ HuggingFace repository `TIACentre/TIAToolbox_pretrained_weights`.
 
 ### Scripting
 
-The extension exposes a Groovy-friendly API. Three templates are
+The extension exposes a Groovy-friendly API. Four templates are
 shipped under **Extensions → TIAToolbox → Script templates**:
 
 - **Patch classification**: `resnet18-kather100k` on the current image.
 - **Nucleus segmentation**: `hovernet_fast-pannuke` on the current image.
+- **Nucleus detection**: `KongNet_CoNIC_1` on the current image — point
+  detections (centroid + class), much faster than segmentation.
 - **Batch process project**: iterates `project.getImageList()` and saves
   each entry's hierarchy.
 
@@ -117,6 +119,19 @@ on the builder.
 | `fcn-tissue_mask` | SemanticSegmentor | Foreground tissue / background mask. |
 | `hovernet_fast-pannuke` | MultiTaskSegmentor | Per-nucleus polygons with 6 type classes (PanNuke). |
 | `hovernetplus-oed` | MultiTaskSegmentor | Nuclei + epithelial layer segmentation, OED dataset. |
+| `KongNet_CoNIC_1` | NucleusDetector | KongNet 6-class nucleus point detection on colorectal H&E (CoNIC). |
+| `KongNet_PanNuke_1` | NucleusDetector | KongNet 5-class nucleus point detection (PanNuke). |
+| `KongNet_MONKEY_1` | NucleusDetector | KongNet immune-cell point detection on PAS-stained kidney biopsies (MONKEY challenge). |
+| `KongNet_Det_MIDOG_1` | NucleusDetector | KongNet mitotic-figure point detection on H&E (MIDOG). |
+| `KongNet_PUMA_T1_3` | NucleusDetector | KongNet 3-class point detection on melanoma H&E (PUMA Track 1). |
+| `KongNet_PUMA_T2_3` | NucleusDetector | KongNet 10-class point detection on melanoma H&E (PUMA Track 2). |
+| `mapde-conic` | NucleusDetector | MapDe single-class nucleus point detection (CoNIC). |
+| `mapde-crchisto` | NucleusDetector | MapDe single-class nucleus point detection (CRCHisto). |
+
+NucleusDetector outputs points (centroids) rather than polygons, so it imports
+into QuPath as `Detection` objects at the detected coordinates. This is the
+faster option when you only need cell counts or density — for full nucleus
+masks, use a MultiTaskSegmentor model instead.
 
 The list is curated from tiatoolbox's
 [`pretrained_model.yaml`](https://github.com/TissueImageAnalytics/tiatoolbox/blob/master/tiatoolbox/data/pretrained_model.yaml).
@@ -124,7 +139,7 @@ To add or remove models, edit
 [`src/main/resources/qupath/ext/tiatoolbox/ui/models.json`](src/main/resources/qupath/ext/tiatoolbox/ui/models.json)
 and rebuild the JAR. Any pretrained
 model accepted by the corresponding tiatoolbox engine works (see
-`PatchPredictor`, `SemanticSegmentor`, `MultiTaskSegmentor`).
+`PatchPredictor`, `SemanticSegmentor`, `MultiTaskSegmentor`, `NucleusDetector`).
 
 
 
@@ -193,6 +208,7 @@ and adds the objects to the QuPath hierarchy.
 │           ├── scripts/                      # Groovy script templates
 │           │   ├── PatchClassification.groovy
 │           │   ├── NucleusSegmentation.groovy
+│           │   ├── NucleusDetection.groovy
 │           │   └── BatchProcessProject.groovy
 │           └── ui/{tiatoolbox_control.fxml, runtime_install.fxml, strings.properties, models.json}
 ├── runtime/
@@ -219,7 +235,7 @@ Both sides share one open Py4J connection across calls.
 ```jsonc
 // request: Java → Python
 {
-  "engine":      "patch_predictor",       // also: "semantic_segmentor", "multi_task_segmentor"
+  "engine":      "patch_predictor",       // also: "semantic_segmentor", "multi_task_segmentor", "nucleus_detector"
   "model":       "resnet18-kather100k",   // any model accepted by the engine
   "wsi_path":    "/abs/path/to/slide.svs",
   "save_dir":    "/tmp/tia-{uuid}",       // GeoJSON is written here
