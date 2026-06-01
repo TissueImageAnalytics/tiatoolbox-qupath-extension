@@ -57,5 +57,72 @@
     "task": "Nucleus instance segmentation",
     "description": "HoVerNetPlus trained on OED; nuclei + epithelial layer segmentation at 0.5 mpp.",
     "classes": ["Background", "Other", "Epithelial"]
+  },
+  {
+    "name": "KongNet_Det_MIDOG_1",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "KongNet mitotic-figure detector trained on MIDOG; H&E, ~0.25 mpp. Outputs point detections.",
+    "classes": ["Mitotic figure"]
+  },
+  {
+    "name": "KongNet_MONKEY_1",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "KongNet immune-cell detector trained on MONKEY (PAS-stained kidney biopsies) at 0.25 mpp. Outputs point detections.",
+    "classes": ["Inflammatory", "Lymphocyte", "Monocyte"]
+  },
+  {
+    "name": "KongNet_CoNIC_1",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "KongNet trained on CoNIC; 6-class nucleus detection in colorectal H&E at 0.5 mpp. Outputs point detections.",
+    "classes": ["Neutrophil", "Epithelial", "Lymphocyte", "Plasma", "Eosinophil", "Connective"]
+  },
+  {
+    "name": "KongNet_PanNuke_1",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "KongNet trained on PanNuke; 5-class nucleus detection across 19 tissue types at 0.25 mpp. Outputs point detections.",
+    "classes": ["Neoplastic", "Inflammatory", "Connective", "Dead", "Epithelial"]
+  },
+  {
+    "name": "KongNet_PUMA_T1_3",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "KongNet PUMA Track 1 (melanoma H&E); 3-class nucleus detection. Outputs point detections.",
+    "classes": ["Tumour cell", "Lymphocyte", "Other cell"]
+  },
+  {
+    "name": "KongNet_PUMA_T2_3",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "KongNet PUMA Track 2 (melanoma H&E); 10-class nucleus detection. Outputs point detections.",
+    "classes": [
+      "Tumour cell",
+      "Lymphocyte",
+      "Plasma cell",
+      "Histiocyte",
+      "Melanophage",
+      "Neutrophil",
+      "Stroma cell",
+      "Epithelial cell",
+      "Endothelial cell",
+      "Apoptotic cell"
+    ]
+  },
+  {
+    "name": "mapde-conic",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "MapDe nucleus detector trained on CoNIC. Single-class point detections.",
+    "classes": ["Nucleus"]
+  },
+  {
+    "name": "mapde-crchisto",
+    "engine": "nucleus_detector",
+    "task": "Nucleus detection",
+    "description": "MapDe nucleus detector trained on CRCHisto. Single-class point detections.",
+    "classes": ["Nucleus"]
   }
 ]

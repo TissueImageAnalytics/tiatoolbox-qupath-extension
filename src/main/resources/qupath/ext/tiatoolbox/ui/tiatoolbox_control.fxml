@@ -3,24 +3,36 @@
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.ChoiceBox?>
+<?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ProgressBar?>
 <?import javafx.scene.control.RadioButton?>
 <?import javafx.scene.control.Spinner?>
 <?import javafx.scene.control.ToggleGroup?>
 <?import javafx.scene.control.Tooltip?>
+<?import javafx.scene.image.Image?>
+<?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.ColumnConstraints?>
 <?import javafx.scene.layout.GridPane?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Priority?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.RowConstraints?>
+<?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 
 <VBox xmlns="http://javafx.com/javafx" xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="qupath.ext.tiatoolbox.ui.TIAController"
       spacing="10.0" prefWidth="480.0">
     <padding><Insets top="14" right="14" bottom="14" left="14"/></padding>
+
+    <!-- Title row: small logo inline before the extension name. -->
+    <HBox spacing="6.0" alignment="CENTER_LEFT">
+        <ImageView fitWidth="18.0" fitHeight="18.0" preserveRatio="true" smooth="true">
+            <image><Image url="@logo.png"/></image>
+        </ImageView>
+        <Label text="%title" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+    </HBox>
 
     <HBox fx:id="runtimeMissingBox" spacing="8.0" alignment="CENTER_LEFT"
           visible="false" managed="false"
@@ -32,41 +44,62 @@
                 style="-fx-background-color: #8a5a00; -fx-text-fill: white; -fx-font-weight: bold;"/>
     </HBox>
 
-    <GridPane hgap="8.0" vgap="6.0">
-        <columnConstraints>
-            <ColumnConstraints minWidth="120.0"/>
-            <ColumnConstraints hgrow="ALWAYS"/>
-            <ColumnConstraints minWidth="80.0"/>
-        </columnConstraints>
-        <rowConstraints>
-            <RowConstraints/><RowConstraints/><RowConstraints/>
-        </rowConstraints>
-
-        <Label text="%ui.model" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
-        <ChoiceBox fx:id="modelChoice" maxWidth="Infinity"
-                   GridPane.rowIndex="0" GridPane.columnIndex="1" GridPane.columnSpan="2"/>
-
-        <Label text="%ui.device" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
-        <ChoiceBox fx:id="deviceChoice" maxWidth="Infinity"
-                   GridPane.rowIndex="1" GridPane.columnIndex="1"/>
-        <Spinner fx:id="batchSpinner" editable="true" prefWidth="80.0"
-                 GridPane.rowIndex="1" GridPane.columnIndex="2">
-            <tooltip><Tooltip text="%ui.batch-size"/></tooltip>
-        </Spinner>
-    </GridPane>
+    <!--
+        Model row. The ComboBox is editable and filterable
+        (see TIAController.installModelFilter). A funnel-style glyph sits
+        on top of the editor via a StackPane so the field reads as a
+        search box at rest. The 'i' button shows the model's full description.
+    -->
+    <HBox spacing="6.0" alignment="CENTER_LEFT">
+        <Label text="%ui.model" minWidth="60.0"/>
+        <StackPane HBox.hgrow="ALWAYS" alignment="CENTER_LEFT">
+            <ComboBox fx:id="modelChoice" editable="true" maxWidth="Infinity"
+                      promptText="%ui.model.filter-prompt">
+                <tooltip><Tooltip text="%ui.model.filter-tip"/></tooltip>
+            </ComboBox>
+            <Label fx:id="modelFilterIcon" text="&#x2315;"
+                   mouseTransparent="true"
+                   style="-fx-text-fill: #8a8a8a; -fx-font-size: 13px;
+                          -fx-padding: 0 0 0 8;"/>
+        </StackPane>
+        <Button fx:id="modelInfoButton" text="i" onAction="#onShowModelInfo"
+                style="-fx-font-size: 12px; -fx-font-style: italic;
+                       -fx-min-width: 24px; -fx-pref-width: 24px;">
+            <tooltip><Tooltip text="%ui.model.info-tip"/></tooltip>
+        </Button>
+    </HBox>
 
     <Label fx:id="modelDescription" wrapText="true" minHeight="36.0"/>
 
+    <!-- Run-on scope. -->
     <HBox spacing="12.0" alignment="CENTER_LEFT">
         <Label text="%ui.scope"/>
-        <fx:define>
-            <ToggleGroup fx:id="scopeGroup"/>
-        </fx:define>
+        <fx:define><ToggleGroup fx:id="scopeGroup"/></fx:define>
         <RadioButton fx:id="scopeCurrent" text="%ui.scope.current"
                      selected="true" toggleGroup="$scopeGroup"/>
         <RadioButton fx:id="scopeProject" text="%ui.scope.project"
                      toggleGroup="$scopeGroup"/>
     </HBox>
+
+    <!-- Device + Batch size, inline (no Additional Options pane). -->
+    <GridPane hgap="8.0" vgap="6.0">
+        <columnConstraints>
+            <ColumnConstraints minWidth="60.0"/>
+            <ColumnConstraints hgrow="ALWAYS"/>
+            <ColumnConstraints minWidth="90.0"/>
+            <ColumnConstraints minWidth="80.0"/>
+        </columnConstraints>
+        <rowConstraints><RowConstraints/></rowConstraints>
+
+        <Label text="%ui.device" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+        <ChoiceBox fx:id="deviceChoice" maxWidth="Infinity"
+                   GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+        <Label text="%ui.batch-size" GridPane.rowIndex="0" GridPane.columnIndex="2"/>
+        <Spinner fx:id="batchSpinner" editable="true" prefWidth="80.0"
+                 GridPane.rowIndex="0" GridPane.columnIndex="3">
+            <tooltip><Tooltip text="%ui.batch-size"/></tooltip>
+        </Spinner>
+    </GridPane>
 
     <VBox spacing="4.0">
         <Label fx:id="statusLabel" text="%ui.status.idle"/>
