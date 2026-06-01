@@ -5,7 +5,21 @@ description = "Runtime env for the TIAToolbox QuPath extension (uv-managed)."
 requires-python = "==3.11.*"
 dependencies = [
     "qupath-tiatoolbox",
+    "tiatoolbox>=2.1.0",
+    "torch",
+    "torchvision",
 ]
 
 [tool.uv.sources]
 qupath-tiatoolbox = { path = "./sidecar" }
+torch = [
+    { index = "pytorch-cu128", marker = "platform_system == 'Windows' or platform_system == 'Linux'" },
+]
+torchvision = [
+    { index = "pytorch-cu128", marker = "platform_system == 'Windows' or platform_system == 'Linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

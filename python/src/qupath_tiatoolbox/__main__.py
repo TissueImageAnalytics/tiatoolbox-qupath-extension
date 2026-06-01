@@ -2,7 +2,7 @@
 
 Started as a subprocess by the QuPath extension::
 
-    python -m qupath_tiatoolbox --python-port 25334
+    python -I -m qupath_tiatoolbox --python-port 25334
 
 Boots a Py4J ClientServer with a :class:`TIATask` entry point on the given
 port, prints ``READY port=<N>`` to stdout (the Java side waits for that
@@ -13,14 +13,43 @@ parent process dies.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import logging
+import os
+import platform
 import signal
 import sys
 import threading
+from ctypes import wintypes
 
 from py4j.clientserver import ClientServer, JavaParameters, PythonParameters
 
 from .bridge import TIATask
+
+_STILL_ACTIVE = 259
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_IS_WINDOWS = platform.system() == "Windows"
+
+
+def _configure_kernel32():
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return kernel32
+
+
+_KERNEL32 = _configure_kernel32() if _IS_WINDOWS else None
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -45,20 +74,45 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _watch_parent(shutdown: threading.Event) -> None:
-    """
-    Trigger shutdown when the parent process closes stdin.
-    """
+def _parent_alive(parent_pid: int) -> bool:
+    """Return True while the original parent process is still running."""
+    if parent_pid <= 0:
+        return False
+
+    if not _IS_WINDOWS:
+        try:
+            os.kill(parent_pid, 0)
+        except OSError:
+            return False
+        return True
+
+    kernel32 = _KERNEL32
+    assert kernel32 is not None
+    handle = kernel32.OpenProcess(
+        _PROCESS_QUERY_LIMITED_INFORMATION, False, parent_pid
+    )
+    if not handle:
+        return False
     try:
-        sys.stdin.buffer.read()  # blocks until EOF  # using os.kill(parent_pid, 0) here fails on windows
-    except Exception:
-        pass
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == _STILL_ACTIVE
     finally:
-        shutdown.set()
+        kernel32.CloseHandle(handle)
+
+
+def _watch_parent(parent_pid: int, shutdown: threading.Event) -> None:
+    """Exit if the parent process disappears (orphaned subprocess guard)."""
+    while not shutdown.wait(2.0):
+        if not _parent_alive(parent_pid):
+            shutdown.set()
+            return
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    parent_pid = os.getppid()
     logging.basicConfig(
         level=args.log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -82,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: shutdown.set())
 
-    threading.Thread(target=_watch_parent, args=(shutdown,), daemon=True).start()
+    threading.Thread(target=_watch_parent, args=(parent_pid, shutdown), daemon=True).start()
 
     shutdown.wait()
     logging.info("Shutting down ClientServer")

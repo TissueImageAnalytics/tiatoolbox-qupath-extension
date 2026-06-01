@@ -28,7 +28,7 @@ public final class PythonLauncher {
     public record Started(Process process, int port) {}
 
     /**
-     * Start {@code <pythonExe> -m qupath_tiatoolbox --python-port 0} and parse
+     * Start {@code <pythonExe> -I -m qupath_tiatoolbox --python-port 0} and parse
      * the bound port from stdout. The returned {@link Process} owns both stdout
      * and stderr drains — caller must ultimately {@code destroy()} it.
      */
@@ -36,10 +36,13 @@ public final class PythonLauncher {
         if (!Files.isExecutable(pythonExe)) {
             throw new IOException("Python executable not found or not executable: " + pythonExe);
         }
-        var cmd = List.of(pythonExe.toString(), "-m", "qupath_tiatoolbox", "--python-port", "0");
+        var cmd = List.of(pythonExe.toString(), "-I", "-m", "qupath_tiatoolbox", "--python-port", "0");
         logger.info("Starting Python sidecar: {}", cmd);
 
         var pb = new ProcessBuilder(cmd).redirectErrorStream(false);
+        pb.environment().remove("PYTHONHOME");
+        pb.environment().remove("PYTHONPATH");
+        pb.environment().put("PYTHONNOUSERSITE", "1");
         var proc = pb.start();
 
         var portRef = new AtomicReference<Integer>();
