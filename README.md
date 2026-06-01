@@ -86,8 +86,6 @@ shipped under **Extensions → TIAToolbox → Script templates**:
 
 - **Patch classification**: `resnet18-kather100k` on the current image.
 - **Nucleus segmentation**: `hovernet_fast-pannuke` on the current image.
-- **Nucleus detection**: `KongNet_CoNIC_1` on the current image — point
-  detections (centroid + class), much faster than segmentation.
 - **Batch process project**: iterates `project.getImageList()` and saves
   each entry's hierarchy.
 
@@ -208,7 +206,6 @@ and adds the objects to the QuPath hierarchy.
 │           ├── scripts/                      # Groovy script templates
 │           │   ├── PatchClassification.groovy
 │           │   ├── NucleusSegmentation.groovy
-│           │   ├── NucleusDetection.groovy
 │           │   └── BatchProcessProject.groovy
 │           └── ui/{tiatoolbox_control.fxml, runtime_install.fxml, strings.properties, models.json}
 ├── runtime/
