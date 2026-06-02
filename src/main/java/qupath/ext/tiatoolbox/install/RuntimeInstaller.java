@@ -31,6 +31,9 @@ public final class RuntimeInstaller {
     /** Python version uv should provision into the venv. */
     private static final String TARGET_PYTHON = "3.11";
 
+    /** Source override written into site-packages for editable local clones. */
+    private static final String LOCAL_TIA_PTH = "qupath_tiatoolbox_local_tiatoolbox.pth";
+
     private final Consumer<String> log;
     private volatile Process process;
 
@@ -43,16 +46,31 @@ public final class RuntimeInstaller {
      * executable on success; throws on any failure.
      */
     public Path install() throws IOException, InterruptedException {
+        return install(RuntimeInstallOptions.defaultInstall());
+    }
+
+    /**
+     * Install (or repair) the runtime with the supplied options. Returns the
+     * path to the venv's Python executable on success; throws on any failure.
+     */
+    public Path install(RuntimeInstallOptions options) throws IOException, InterruptedException {
+        options = Objects.requireNonNull(options);
         var root = RuntimePaths.runtimeRoot();
         Files.createDirectories(root);
         Files.createDirectories(RuntimePaths.logsDir());
 
         log.accept("Runtime directory: " + root);
+        if (options.useLocalTiatoolboxClone()) {
+            log.accept("TIAToolbox source: " + options.localTiatoolboxClone()
+                    + (options.editableLocalClone() ? " (editable source override)" : ""));
+            validateLocalTiatoolboxClone(options.localTiatoolboxClone());
+        }
 
         extractUvBinary();
         extractSidecarSources();
-        writeProjectFile();
+        writeProjectFile(options);
         runUvSync();
+        configureLocalTiatoolboxOverride(options);
 
         var python = RuntimePaths.venvPython();
         if (!Files.isExecutable(python)) {
@@ -103,8 +121,11 @@ public final class RuntimeInstaller {
         }
     }
 
-    private void writeProjectFile() throws IOException {
+    private void writeProjectFile(RuntimeInstallOptions options) throws IOException {
         var contents = readResourceText(RES_BASE + "pyproject.toml");
+        if (options.useLocalTiatoolboxClone() && !options.editableLocalClone()) {
+            contents = withLocalTiatoolboxSource(contents, options);
+        }
         Files.writeString(RuntimePaths.projectFile(), contents, StandardCharsets.UTF_8);
         log.accept("Wrote pyproject.toml");
     }
@@ -160,6 +181,55 @@ public final class RuntimeInstaller {
         }
     }
 
+    private void configureLocalTiatoolboxOverride(RuntimeInstallOptions options)
+            throws IOException, InterruptedException {
+        var sitePackages = sitePackagesDir();
+        var pth = sitePackages.resolve(LOCAL_TIA_PTH);
+
+        if (!options.useLocalTiatoolboxClone() || !options.editableLocalClone()) {
+            Files.deleteIfExists(pth);
+            return;
+        }
+
+        Files.createDirectories(sitePackages);
+        var source = options.localTiatoolboxClone().toString();
+        var contents = "import sys; p = " + pythonString(source)
+                + "; sys.path.remove(p) if p in sys.path else None; sys.path.insert(0, p)"
+                + System.lineSeparator();
+        Files.writeString(pth, contents, StandardCharsets.UTF_8);
+        log.accept("Installed editable TIAToolbox source override: " + pth);
+    }
+
+    private Path sitePackagesDir() throws IOException, InterruptedException {
+        var cmd = java.util.List.of(
+                RuntimePaths.venvPython().toString(),
+                "-c",
+                "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"
+        );
+        var pb = new ProcessBuilder(cmd);
+        pb.environment().remove("PYTHONHOME");
+        pb.environment().remove("PYTHONPATH");
+        pb.environment().put("PYTHONNOUSERSITE", "1");
+        pb.directory(RuntimePaths.runtimeRoot().toFile());
+        pb.redirectErrorStream(true);
+
+        var proc = pb.start();
+        try (var reader = new BufferedReader(
+                new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+            var output = reader.lines().toList();
+            var code = proc.waitFor();
+            if (code != 0 || output.isEmpty() || output.get(0).isBlank()) {
+                throw new IOException("Could not locate venv site-packages: "
+                        + String.join("\n", output));
+            }
+            return Path.of(output.get(0).trim());
+        } catch (InterruptedException e) {
+            proc.destroyForcibly();
+            Thread.currentThread().interrupt();
+            throw e;
+        }
+    }
+
     // -- Helpers --------------------------------------------------------------
 
     private static String uvResourceName() {
@@ -190,6 +260,128 @@ public final class RuntimeInstaller {
             if (in == null) throw new IOException("Missing JAR resource: " + fullPath);
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    private static void validateLocalTiatoolboxClone(Path path) throws IOException {
+        if (!Files.isDirectory(path)) {
+            throw new IOException("Local TIAToolbox clone is not a directory: " + path);
+        }
+        if (!Files.isRegularFile(path.resolve("pyproject.toml"))) {
+            throw new IOException("Local TIAToolbox clone must contain pyproject.toml: " + path);
+        }
+    }
+
+    private static String withLocalTiatoolboxSource(String contents, RuntimeInstallOptions options) {
+        var sourceLine = "tiatoolbox = { path = "
+                + tomlString(options.localTiatoolboxClone().toString())
+                + (options.editableLocalClone() ? ", editable = true" : "")
+                + " }";
+        var lines = contents.split("\\R", -1);
+        var out = new StringBuilder(contents.length() + sourceLine.length() + 32);
+        var inSources = false;
+        var sawSources = false;
+        var sourceWritten = false;
+
+        for (var line : lines) {
+            var trimmed = line.trim();
+            var startsTable = trimmed.startsWith("[") && !trimmed.startsWith("#");
+
+            if (inSources && startsTable && !trimmed.equals("[tool.uv.sources]")) {
+                if (!sourceWritten) {
+                    out.append(sourceLine).append(System.lineSeparator());
+                    sourceWritten = true;
+                }
+                inSources = false;
+            }
+
+            if (trimmed.equals("[tool.uv.sources]")) {
+                inSources = true;
+                sawSources = true;
+            }
+
+            if (inSources && isTomlKey(line, "tiatoolbox")) {
+                if (!sourceWritten) {
+                    out.append(sourceLine).append(System.lineSeparator());
+                    sourceWritten = true;
+                }
+                continue;
+            }
+
+            out.append(line).append(System.lineSeparator());
+        }
+
+        if (sawSources && inSources && !sourceWritten) {
+            out.append(sourceLine).append(System.lineSeparator());
+        } else if (!sawSources) {
+            out.append(System.lineSeparator())
+                    .append("[tool.uv.sources]").append(System.lineSeparator())
+                    .append(sourceLine).append(System.lineSeparator());
+        }
+
+        return out.toString();
+    }
+
+    private static boolean isTomlKey(String line, String key) {
+        var trimmed = line.trim();
+        if (!trimmed.startsWith(key) || trimmed.length() == key.length()) {
+            return false;
+        }
+        var rest = trimmed.substring(key.length());
+        return rest.startsWith("=")
+                || (!rest.isEmpty() && Character.isWhitespace(rest.charAt(0))
+                && rest.trim().startsWith("="));
+    }
+
+    private static String tomlString(String value) {
+        var out = new StringBuilder(value.length() + 2);
+        out.append('"');
+        for (int i = 0; i < value.length(); i++) {
+            var c = value.charAt(i);
+            switch (c) {
+                case '\\' -> out.append("\\\\");
+                case '"' -> out.append("\\\"");
+                case '\b' -> out.append("\\b");
+                case '\t' -> out.append("\\t");
+                case '\n' -> out.append("\\n");
+                case '\f' -> out.append("\\f");
+                case '\r' -> out.append("\\r");
+                default -> {
+                    if (c < 0x20) {
+                        out.append(String.format("\\u%04x", (int)c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        out.append('"');
+        return out.toString();
+    }
+
+    private static String pythonString(String value) {
+        var out = new StringBuilder(value.length() + 2);
+        out.append('"');
+        for (int i = 0; i < value.length(); i++) {
+            var c = value.charAt(i);
+            switch (c) {
+                case '\\' -> out.append("\\\\");
+                case '"' -> out.append("\\\"");
+                case '\b' -> out.append("\\b");
+                case '\t' -> out.append("\\t");
+                case '\n' -> out.append("\\n");
+                case '\f' -> out.append("\\f");
+                case '\r' -> out.append("\\r");
+                default -> {
+                    if (c < 0x20) {
+                        out.append(String.format("\\u%04x", (int)c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        out.append('"');
+        return out.toString();
     }
 
     private static void deleteRecursive(Path root) throws IOException {

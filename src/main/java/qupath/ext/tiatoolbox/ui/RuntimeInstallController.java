@@ -4,17 +4,22 @@ import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
 import javafx.scene.control.TitledPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.tiatoolbox.install.RuntimeInstallOptions;
 import qupath.ext.tiatoolbox.install.RuntimeInstaller;
 import qupath.ext.tiatoolbox.install.RuntimePaths;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.MessageFormat;
 import java.util.ResourceBundle;
@@ -37,6 +42,10 @@ public class RuntimeInstallController {
     @FXML private ProgressBar progressBar;
     @FXML private TitledPane logPane;
     @FXML private TextArea logArea;
+    @FXML private CheckBox localCloneCheckBox;
+    @FXML private TextField localCloneField;
+    @FXML private Button browseLocalCloneButton;
+    @FXML private CheckBox editableCheckBox;
     @FXML private Button installButton;
     @FXML private Button closeButton;
 
@@ -46,6 +55,9 @@ public class RuntimeInstallController {
     @FXML
     private void initialize() {
         pathLabel.setText(RuntimePaths.runtimeRoot().toString());
+        localCloneField.disableProperty().bind(localCloneCheckBox.selectedProperty().not());
+        browseLocalCloneButton.disableProperty().bind(localCloneCheckBox.selectedProperty().not());
+        editableCheckBox.disableProperty().bind(localCloneCheckBox.selectedProperty().not());
 
         // If a previous install left a working venv, surface that immediately.
         var python = RuntimePaths.installedPython();
@@ -59,6 +71,17 @@ public class RuntimeInstallController {
 
     @FXML
     private void onInstall() {
+        RuntimeInstallOptions options;
+        try {
+            options = installOptions();
+        } catch (IllegalArgumentException e) {
+            statusLabel.textProperty().unbind();
+            clearStatusStyle();
+            statusLabel.setText(String.format(
+                    RES.getString("runtime.install.status.failed"), e.getMessage()));
+            return;
+        }
+
         logArea.clear();
         logPane.setExpanded(true);
         statusLabel.textProperty().unbind();
@@ -69,11 +92,25 @@ public class RuntimeInstallController {
         // Keep Close as 'Cancel' while running so the user can abort.
         closeButton.setText(RES.getString("runtime.install.button.cancel"));
 
-        var task = installTask();
+        var task = installTask(options);
         currentTask.set(task);
         var th = new Thread(task, "tiatoolbox-runtime-install");
         th.setDaemon(true);
         th.start();
+    }
+
+    @FXML
+    private void onBrowseLocalClone() {
+        var chooser = new DirectoryChooser();
+        chooser.setTitle(RES.getString("runtime.install.local-clone.path"));
+        initialLocalCloneDirectory().ifPresent(dir -> chooser.setInitialDirectory(dir.toFile()));
+
+        var window = closeButton.getScene() == null ? null : closeButton.getScene().getWindow();
+        var selected = chooser.showDialog(window);
+        if (selected != null) {
+            localCloneField.setText(selected.toPath().toString());
+            localCloneCheckBox.setSelected(true);
+        }
     }
 
     @FXML
@@ -91,7 +128,7 @@ public class RuntimeInstallController {
         stage.close();
     }
 
-    private Task<Path> installTask() {
+    private Task<Path> installTask(RuntimeInstallOptions options) {
         return new Task<>() {
             @Override
             protected Path call() throws Exception {
@@ -102,7 +139,7 @@ public class RuntimeInstallController {
                 var installer = new RuntimeInstaller(sink);
                 currentInstaller.set(installer);
                 try {
-                    return installer.install();
+                    return installer.install(options);
                 } finally {
                     currentInstaller.compareAndSet(installer, null);
                 }
@@ -153,6 +190,36 @@ public class RuntimeInstallController {
                 currentInstaller.set(null);
             }
         };
+    }
+
+    private RuntimeInstallOptions installOptions() {
+        if (!localCloneCheckBox.isSelected()) {
+            return RuntimeInstallOptions.defaultInstall();
+        }
+        var text = localCloneField.getText() == null ? "" : localCloneField.getText().trim();
+        if (text.isBlank()) {
+            throw new IllegalArgumentException("Choose a local TIAToolbox clone.");
+        }
+        return new RuntimeInstallOptions(Path.of(text), editableCheckBox.isSelected());
+    }
+
+    private java.util.Optional<Path> initialLocalCloneDirectory() {
+        var text = localCloneField.getText() == null ? "" : localCloneField.getText().trim();
+        if (!text.isBlank()) {
+            try {
+                var path = Path.of(text);
+                if (Files.isDirectory(path)) {
+                    return java.util.Optional.of(path);
+                }
+                var parent = path.getParent();
+                if (parent != null && Files.isDirectory(parent)) {
+                    return java.util.Optional.of(parent);
+                }
+            } catch (RuntimeException ignored) {
+                // Fall back to the default chooser location.
+            }
+        }
+        return java.util.Optional.empty();
     }
 
     private void setInfoStatusStyle() {
