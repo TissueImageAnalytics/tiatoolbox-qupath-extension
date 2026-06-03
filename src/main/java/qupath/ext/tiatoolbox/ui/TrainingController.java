@@ -61,6 +61,7 @@ public class TrainingController {
     @FXML private Spinner<Integer> batchSpinner;
     @FXML private Spinner<Integer> patchSizeSpinner;
     @FXML private Spinner<Integer> strideSpinner;
+    @FXML private Spinner<Double> mppSpinner;
     @FXML private Spinner<Integer> maxPatchesSpinner;
     @FXML private Spinner<Integer> seedSpinner;
     @FXML private Spinner<Double> validationSpinner;
@@ -98,6 +99,7 @@ public class TrainingController {
         batchSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 256, 8));
         patchSizeSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(32, 2048, 224, 16));
         strideSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(32, 2048, 224, 16));
+        mppSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(0.05, 20.0, 0.5, 0.05));
         maxPatchesSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 100000, 250));
         seedSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(0, Integer.MAX_VALUE, 1));
         validationSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(0.0, 0.9, 0.2, 0.05));
@@ -228,6 +230,10 @@ public class TrainingController {
         }
 
         var spec = parseBackbone(backboneChoice.getValue());
+        var mpp = mppSpinner.getValue();
+        if (mpp == null || mpp <= 0) {
+            throw new IllegalStateException(RES.getString("training.error.mpp"));
+        }
         var request = new TrainingRequest(
                 slides,
                 selectedClasses,
@@ -240,6 +246,7 @@ public class TrainingController {
                         Double.parseDouble(learningRateField.getText().trim()),
                         patchSizeSpinner.getValue(),
                         strideSpinner.getValue(),
+                        mpp,
                         validationSpinner.getValue(),
                         maxPatchesSpinner.getValue(),
                         seedSpinner.getValue(),

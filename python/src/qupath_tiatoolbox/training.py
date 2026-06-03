@@ -38,6 +38,36 @@ class _SlideSpec:
     split: str
 
 
+_ANNOTATION_STORE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
+
+
+class _QuPathSlideAnnotationPatchDataset(SlideAnnotationPatchDataset):
+    @staticmethod
+    def _normalize_input_masks(input_masks: Any, num_slides: int) -> list[Any]:
+        """Keep annotation-store masks as strings for TIAToolbox patch extraction."""
+        if isinstance(input_masks, list):
+            if len(input_masks) != num_slides:
+                msg = (
+                    "When `input_masks` is a list it must have the same length "
+                    "as `slide_inputs`."
+                )
+                raise ValueError(msg)
+            values = input_masks
+        else:
+            values = [input_masks for _ in range(num_slides)]
+
+        normalized = []
+        for mask in values:
+            if (
+                isinstance(mask, (str, Path))
+                and Path(mask).suffix.lower() in _ANNOTATION_STORE_SUFFIXES
+            ):
+                normalized.append(str(mask))
+            else:
+                normalized.append(mask)
+        return normalized
+
+
 class TrainingCancelled(RuntimeError):
     """Raised when the Java side requests cancellation."""
 
@@ -151,6 +181,9 @@ def run_training(
     model_spec = dict(request.get("model") or {})
     patch_size = int(options.get("patch_size", 224))
     stride = int(options.get("stride", patch_size))
+    mpp = float(options.get("mpp", 0.5))
+    if mpp <= 0:
+        raise ValueError("Training resolution `mpp` must be positive.")
     seed = int(options.get("seed", 1))
     min_mask_ratio = float(options.get("min_mask_ratio", 0.01))
 
@@ -167,6 +200,7 @@ def run_training(
         target_builder=target_builder,
         patch_size=patch_size,
         stride=stride,
+        mpp=mpp,
         min_mask_ratio=min_mask_ratio,
     )
     val_dataset = (
@@ -176,6 +210,7 @@ def run_training(
             target_builder=target_builder,
             patch_size=patch_size,
             stride=stride,
+            mpp=mpp,
             min_mask_ratio=min_mask_ratio,
         )
         if val_slides
@@ -216,8 +251,8 @@ def run_training(
     )
 
     ioconfig = IOPatchPredictorConfig(
-        input_resolutions=[{"units": "baseline", "resolution": 1.0}],
-        output_resolutions=[{"units": "baseline", "resolution": 1.0}],
+        input_resolutions=[{"units": "mpp", "resolution": mpp}],
+        output_resolutions=[{"units": "mpp", "resolution": mpp}],
         patch_input_shape=[patch_size, patch_size],
         stride_shape=[stride, stride],
     )
@@ -240,6 +275,8 @@ def run_training(
             "classes": classes,
             "patch_size": patch_size,
             "stride": stride,
+            "mpp": mpp,
+            "units": "mpp",
         },
     )
 
@@ -312,32 +349,52 @@ def _parse_slides(payload: list[dict[str, Any]]) -> list[_SlideSpec]:
     return slides
 
 
-def _build_stores(slides: list[_SlideSpec], stores_dir: Path, listener: Any) -> list[SQLiteStore]:
-    stores: list[SQLiteStore] = []
-    for slide in slides:
+def _safe_store_stem(slide: _SlideSpec, index: int) -> str:
+    stem = "".join(
+        character if character.isalnum() or character in {"-", "_", "."} else "_"
+        for character in slide.name
+    ).strip("._")
+    if not stem:
+        stem = "slide"
+    return f"{slide.split}-{index:04d}-{stem}"
+
+
+def _build_stores(slides: list[_SlideSpec], stores_dir: Path, listener: Any) -> list[Path]:
+    stores_dir.mkdir(parents=True, exist_ok=True)
+    stores: list[Path] = []
+    for index, slide in enumerate(slides):
         _safe_status(listener, f"Converting annotations: {slide.name}")
-        store = SQLiteStore.from_geojson(slide.geojson_path, transform=_qupath_transform)
-        stores.append(store)
+        store_path = stores_dir / f"{_safe_store_stem(slide, index)}.db"
+        if store_path.exists():
+            store_path.unlink()
+        store = SQLiteStore(store_path)
+        try:
+            store.add_from_geojson(slide.geojson_path, transform=_qupath_transform)
+            store.commit()
+        finally:
+            store.close()
+        stores.append(store_path)
     return stores
 
 
 def _build_dataset(
     *,
     slides: list[_SlideSpec],
-    stores: list[SQLiteStore],
+    stores: list[Path],
     target_builder: CoverageClassTargetBuilder,
     patch_size: int,
     stride: int,
+    mpp: float,
     min_mask_ratio: float,
 ) -> SlideAnnotationPatchDataset:
-    return SlideAnnotationPatchDataset(
+    return _QuPathSlideAnnotationPatchDataset(
         slide_inputs=[slide.wsi_path for slide in slides],
         annotation_stores=stores,
         target_builder=target_builder,
         patch_size=patch_size,
         stride=stride,
-        resolution=0,
-        units="level",
+        resolution=mpp,
+        units="mpp",
         within_bound=True,
         input_masks=stores,
         min_mask_ratio=min_mask_ratio,
@@ -352,31 +409,135 @@ def _capped_subset(
     listener: Any,
     cancel_event: Any,
 ) -> Subset:
-    groups: dict[tuple[int, int], list[int]] = {}
-    ignored = 0
-    for index in range(len(dataset)):
-        if cancel_event is not None and cancel_event.is_set():
-            raise TrainingCancelled("Training cancelled.")
-        sample = dataset[index]
-        label = int(sample["target"].item())
-        if label < 0:
-            ignored += 1
-            continue
-        slide_index = int(sample["slide_index"].item())
-        groups.setdefault((slide_index, label), []).append(index)
+    if max_per_class_slide <= 0:
+        raise ValueError("`max_patches_per_class_slide` must be positive.")
+
+    output_shape = _target_output_shape(dataset)
+    candidate_indices_by_slide: dict[int, list[int]] = {}
+    for candidate_index, slide_index in enumerate(dataset.sample_slide_indices.tolist()):
+        candidate_indices_by_slide.setdefault(int(slide_index), []).append(candidate_index)
 
     rng = random.Random(seed)
+    groups: dict[tuple[int, int], list[int]] = {}
+    ignored = 0
+    evaluated = 0
+    for slide_number, (slide_index, candidate_indices) in enumerate(
+        sorted(candidate_indices_by_slide.items()),
+        start=1,
+    ):
+        if cancel_event is not None and cancel_event.is_set():
+            raise TrainingCancelled("Training cancelled.")
+
+        store = dataset._get_store(slide_index)
+        slide_labels = _store_labels(store, dataset.target_builder)
+        selected_counts = {label: 0 for label in slide_labels}
+        rng.shuffle(candidate_indices)
+        _safe_status(
+            listener,
+            (
+                f"Sampling slide {slide_number}/{len(candidate_indices_by_slide)} "
+                f"from {len(candidate_indices)} candidates..."
+            ),
+        )
+
+        for index in candidate_indices:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TrainingCancelled("Training cancelled.")
+            if selected_counts and all(
+                count >= max_per_class_slide for count in selected_counts.values()
+            ):
+                break
+
+            label = _candidate_label(dataset, index, output_shape)
+            evaluated += 1
+            if label < 0:
+                ignored += 1
+                continue
+
+            key = (slide_index, label)
+            if len(groups.get(key, [])) >= max_per_class_slide:
+                continue
+            groups.setdefault(key, []).append(index)
+            selected_counts[label] = selected_counts.get(label, 0) + 1
+
     selected: list[int] = []
     for indices in groups.values():
-        if len(indices) > max_per_class_slide:
-            selected.extend(rng.sample(indices, max_per_class_slide))
-        else:
-            selected.extend(indices)
+        selected.extend(indices[:max_per_class_slide])
     selected.sort()
     if not selected:
         raise ValueError("No labelled patches were available after sampling.")
-    _safe_status(listener, f"Selected {len(selected)} patches ({ignored} ignored).")
+    _safe_status(
+        listener,
+        (
+            f"Selected {len(selected)} patches after evaluating "
+            f"{evaluated}/{len(dataset)} candidates ({ignored} ignored)."
+        ),
+    )
     return Subset(dataset, selected)
+
+
+def _target_output_shape(dataset: SlideAnnotationPatchDataset) -> tuple[int, int]:
+    patch_size = dataset.patch_size
+    if isinstance(patch_size, (tuple, list)):
+        width, height = patch_size
+        return int(height), int(width)
+    size = int(patch_size)
+    return size, size
+
+
+def _store_labels(
+    store: SQLiteStore,
+    target_builder: CoverageClassTargetBuilder,
+) -> set[int]:
+    class_mapping = dict(getattr(target_builder, "class_mapping", {}) or {})
+    class_property = str(getattr(target_builder, "class_property", "class"))
+    try:
+        values = store.pquery(lambda props: props.get(class_property))
+    except Exception:  # noqa: BLE001
+        logger.debug("Could not query slide labels from annotation store.", exc_info=True)
+        values = set(class_mapping)
+
+    if not isinstance(values, set):
+        values = set(values)
+
+    labels = {
+        int(class_mapping[value])
+        for value in values
+        if value in class_mapping
+    }
+    if labels:
+        return labels
+    return {int(label) for label in class_mapping.values()}
+
+
+def _candidate_label(
+    dataset: SlideAnnotationPatchDataset,
+    index: int,
+    output_shape: tuple[int, int],
+) -> int:
+    slide_index = int(dataset.sample_slide_indices[index])
+    bounds_at_resolution = tuple(
+        int(value) for value in dataset.sample_bounds[index].tolist()
+    )
+    reader = dataset._get_reader(slide_index)
+    bounds_at_baseline = tuple(
+        float(value)
+        for value in reader.bounds_at_resolution_to_baseline(
+            bounds_at_resolution,
+            dataset.resolution,
+            dataset.units,
+        )
+    )
+    target = dataset.target_builder.create_target(
+        store=dataset._get_store(slide_index),
+        patch_bounds=bounds_at_baseline,
+        output_shape=output_shape,
+    )
+    if isinstance(target, torch.Tensor):
+        return int(target.item())
+    if isinstance(target, np.ndarray):
+        return int(np.asarray(target).item())
+    return int(target)
 
 
 def _qupath_transform(annotation: Annotation) -> Annotation:

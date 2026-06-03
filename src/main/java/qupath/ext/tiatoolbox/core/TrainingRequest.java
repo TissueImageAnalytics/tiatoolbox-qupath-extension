@@ -40,6 +40,7 @@ public record TrainingRequest(
             double learning_rate,
             int patch_size,
             int stride,
+            double mpp,
             double validation_fraction,
             int max_patches_per_class_slide,
             int seed,
