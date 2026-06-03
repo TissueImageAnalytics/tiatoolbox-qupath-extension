@@ -1,0 +1,413 @@
+"""Training workflow used by the QuPath extension."""
+
+from __future__ import annotations
+
+import json
+import logging
+import random
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+from torch import nn
+from torch.utils.data import DataLoader, Subset
+
+from tiatoolbox.annotation import Annotation, SQLiteStore
+from tiatoolbox.models.architecture.vanilla import CNNModel, TimmModel
+from tiatoolbox.models.engine.io_config import IOPatchPredictorConfig
+from tiatoolbox.models.training import (
+    CheckpointConfig,
+    ClassificationTask,
+    CoverageClassTargetBuilder,
+    SlideAnnotationPatchDataset,
+    Trainer,
+    TrainerConfig,
+    TrainingArtifactManifest,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _SlideSpec:
+    name: str
+    wsi_path: Path
+    geojson_path: Path
+    split: str
+
+
+class TrainingCancelled(RuntimeError):
+    """Raised when the Java side requests cancellation."""
+
+
+class _CancellableTrainer(Trainer):
+    def __init__(self, *args: Any, cancel_event: Any = None, listener: Any = None, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.cancel_event = cancel_event
+        self.listener = listener
+
+    def _check_cancelled(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise TrainingCancelled("Training cancelled.")
+
+    def _run_epoch(self, loader: DataLoader, *, training: bool) -> dict[str, float]:
+        self.model.train(mode=training)
+        mode_name = "train" if training else "val"
+
+        metric_totals: dict[str, float] = {"loss": 0.0}
+        total_samples = 0
+
+        if training:
+            self.optimizer.zero_grad(set_to_none=True)
+
+        self.task.reset_epoch_state(training=training)
+
+        for step_index, batch in enumerate(loader, start=1):
+            self._check_cancelled()
+            images, targets = self._extract_batch(batch)
+            images = images.to(self.device).float()
+            targets = self._move_to_device(targets)
+
+            with torch.set_grad_enabled(training):
+                with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
+                    output = self.model(images)
+                    loss = self.task.compute_loss(output, targets)
+
+            batch_size = int(images.shape[0])
+            total_samples += batch_size
+
+            detached_output = self._detach(output)
+            detached_targets = self._detach(targets)
+            batch_metrics = self.task.compute_metrics(detached_output, detached_targets)
+            self.task.update_epoch_state(detached_output, detached_targets)
+            metric_totals["loss"] += float(loss.item()) * batch_size
+            for metric_name, metric_value in batch_metrics.items():
+                metric_totals[metric_name] = (
+                    metric_totals.get(metric_name, 0.0) + metric_value * batch_size
+                )
+
+            if training:
+                scaled_loss = loss / self.config.grad_accum_steps
+                if self.use_amp:
+                    self.grad_scaler.scale(scaled_loss).backward()
+                else:
+                    scaled_loss.backward()
+
+                last_step = step_index == len(loader)
+                should_step = (step_index % self.config.grad_accum_steps == 0) or last_step
+                if should_step:
+                    self._optimizer_step()
+
+            if (
+                self.config.log_every_n_steps > 0
+                and step_index % self.config.log_every_n_steps == 0
+            ):
+                _safe_status(
+                    self.listener,
+                    f"{mode_name} step {step_index}/{len(loader)}: loss={float(loss.item()):.4f}",
+                )
+
+        if total_samples == 0:
+            raise ValueError(f"`{mode_name}` dataloader yielded zero samples.")
+
+        epoch_metrics = {
+            metric_name: metric_total / total_samples
+            for metric_name, metric_total in metric_totals.items()
+        }
+        epoch_metrics.update(self.task.compute_epoch_metrics())
+        return epoch_metrics
+
+
+def run_training(
+    request: dict[str, Any],
+    *,
+    listener: Any = None,
+    cancel_event: Any = None,
+) -> dict[str, Any]:
+    """Run the v1 QuPath patch-classification training workflow."""
+    _safe_status(listener, "Preparing training data...")
+
+    output_dir = Path(request["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    classes = list(request["classes"])
+    if len(classes) < 2:
+        raise ValueError("Patch classification training requires at least two classes.")
+
+    class_mapping = {name: index for index, name in enumerate(classes)}
+    slides = _parse_slides(request.get("slides", []))
+    train_slides = [slide for slide in slides if slide.split == "train"]
+    val_slides = [slide for slide in slides if slide.split == "val"]
+    if not train_slides:
+        raise ValueError("Training request contains no training slides.")
+
+    stores_dir = output_dir / "annotation-stores"
+    stores_dir.mkdir(parents=True, exist_ok=True)
+    train_stores = _build_stores(train_slides, stores_dir, listener)
+    val_stores = _build_stores(val_slides, stores_dir, listener) if val_slides else []
+
+    options = dict(request.get("options") or {})
+    model_spec = dict(request.get("model") or {})
+    patch_size = int(options.get("patch_size", 224))
+    stride = int(options.get("stride", patch_size))
+    seed = int(options.get("seed", 1))
+    min_mask_ratio = float(options.get("min_mask_ratio", 0.01))
+
+    target_builder = CoverageClassTargetBuilder(
+        class_mapping=class_mapping,
+        class_property="class",
+        default_label=-100,
+        min_fraction=float(options.get("min_fraction", 0.0)),
+    )
+
+    train_dataset = _build_dataset(
+        slides=train_slides,
+        stores=train_stores,
+        target_builder=target_builder,
+        patch_size=patch_size,
+        stride=stride,
+        min_mask_ratio=min_mask_ratio,
+    )
+    val_dataset = (
+        _build_dataset(
+            slides=val_slides,
+            stores=val_stores,
+            target_builder=target_builder,
+            patch_size=patch_size,
+            stride=stride,
+            min_mask_ratio=min_mask_ratio,
+        )
+        if val_slides
+        else None
+    )
+
+    max_per_class_slide = int(options.get("max_patches_per_class_slide", 250))
+    _safe_status(listener, f"Sampling training patches from {len(train_dataset)} candidates...")
+    train_dataset = _capped_subset(
+        train_dataset,
+        max_per_class_slide=max_per_class_slide,
+        seed=seed,
+        listener=listener,
+        cancel_event=cancel_event,
+    )
+    if val_dataset is not None:
+        _safe_status(listener, f"Sampling validation patches from {len(val_dataset)} candidates...")
+        val_dataset = _capped_subset(
+            val_dataset,
+            max_per_class_slide=max(1, max_per_class_slide // 4),
+            seed=seed + 1,
+            listener=listener,
+            cancel_event=cancel_event,
+        )
+
+    _safe_status(listener, "Building model...")
+    model = build_model(model_spec, num_classes=len(classes))
+    optimizer = torch.optim.Adam(model.parameters(), lr=float(options.get("learning_rate", 1e-4)))
+    task = ClassificationTask(ignore_index=-100)
+
+    batch_size = int(options.get("batch_size", 8))
+    num_workers = int(options.get("num_workers", 0))
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = (
+        DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+        if val_dataset is not None
+        else None
+    )
+
+    ioconfig = IOPatchPredictorConfig(
+        input_resolutions=[{"units": "baseline", "resolution": 1.0}],
+        output_resolutions=[{"units": "baseline", "resolution": 1.0}],
+        patch_input_shape=[patch_size, patch_size],
+        stride_shape=[stride, stride],
+    )
+    artifact = TrainingArtifactManifest.from_model(
+        model,
+        task_type="classification",
+        model_constructor={
+            "model_type": model_spec.get("model_type", "CNNModel"),
+            "backbone": model_spec.get("backbone", "resnet18"),
+            "num_classes": len(classes),
+            "pretrained": bool(model_spec.get("pretrained", False)),
+        },
+        model_description=f"{model_spec.get('model_type', 'CNNModel')} {model_spec.get('backbone', 'resnet18')}",
+        class_dict={index: name for name, index in class_mapping.items()},
+        ioconfig=ioconfig,
+        engine="PatchPredictor",
+        run_kwargs={"return_probabilities": True},
+        metadata={
+            "qupath_training": True,
+            "classes": classes,
+            "patch_size": patch_size,
+            "stride": stride,
+        },
+    )
+
+    monitor = "val_loss" if val_loader is not None else "train_loss"
+    trainer = _CancellableTrainer(
+        model=model,
+        task=task,
+        optimizer=optimizer,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        config=TrainerConfig(
+            max_epochs=int(options.get("epochs", 1)),
+            device=str(options.get("device", "auto")),
+            amp="auto",
+            seed=seed,
+            monitor=monitor,
+            monitor_mode="min",
+            output_dir=output_dir,
+            log_every_n_steps=int(options.get("log_every_n_steps", 20)),
+        ),
+        checkpoint_config=CheckpointConfig(),
+        artifact_manifest=artifact,
+        cancel_event=cancel_event,
+        listener=listener,
+    )
+
+    _safe_status(listener, "Training...")
+    history = trainer.fit()
+    artifact_path = output_dir / "training_artifact.json"
+    if not artifact_path.exists():
+        artifact.save(artifact_path)
+
+    _safe_status(listener, "Training complete.")
+    return {
+        "artifact": str(artifact_path),
+        "output_dir": str(output_dir),
+        "history": history,
+        "train_samples": len(train_dataset),
+        "val_samples": 0 if val_dataset is None else len(val_dataset),
+    }
+
+
+def build_model(model_spec: dict[str, Any], *, num_classes: int) -> nn.Module:
+    """Construct a supported v1 classification model."""
+    model_type = str(model_spec.get("model_type", "CNNModel"))
+    backbone = str(model_spec.get("backbone", "resnet18"))
+    if model_type == "CNNModel":
+        return CNNModel(backbone=backbone, num_classes=num_classes)
+    if model_type == "TimmModel":
+        return TimmModel(
+            backbone=backbone,
+            num_classes=num_classes,
+            pretrained=bool(model_spec.get("pretrained", False)),
+        )
+    raise ValueError(f"Unsupported model_type: {model_type}")
+
+
+def _parse_slides(payload: list[dict[str, Any]]) -> list[_SlideSpec]:
+    slides = [
+        _SlideSpec(
+            name=str(item["name"]),
+            wsi_path=Path(item["wsi_path"]),
+            geojson_path=Path(item["geojson_path"]),
+            split=str(item["split"]),
+        )
+        for item in payload
+    ]
+    if not slides:
+        raise ValueError("Training request contains no slides.")
+    return slides
+
+
+def _build_stores(slides: list[_SlideSpec], stores_dir: Path, listener: Any) -> list[SQLiteStore]:
+    stores: list[SQLiteStore] = []
+    for slide in slides:
+        _safe_status(listener, f"Converting annotations: {slide.name}")
+        store = SQLiteStore.from_geojson(slide.geojson_path, transform=_qupath_transform)
+        stores.append(store)
+    return stores
+
+
+def _build_dataset(
+    *,
+    slides: list[_SlideSpec],
+    stores: list[SQLiteStore],
+    target_builder: CoverageClassTargetBuilder,
+    patch_size: int,
+    stride: int,
+    min_mask_ratio: float,
+) -> SlideAnnotationPatchDataset:
+    return SlideAnnotationPatchDataset(
+        slide_inputs=[slide.wsi_path for slide in slides],
+        annotation_stores=stores,
+        target_builder=target_builder,
+        patch_size=patch_size,
+        stride=stride,
+        resolution=0,
+        units="level",
+        within_bound=True,
+        input_masks=stores,
+        min_mask_ratio=min_mask_ratio,
+    )
+
+
+def _capped_subset(
+    dataset: SlideAnnotationPatchDataset,
+    *,
+    max_per_class_slide: int,
+    seed: int,
+    listener: Any,
+    cancel_event: Any,
+) -> Subset:
+    groups: dict[tuple[int, int], list[int]] = {}
+    ignored = 0
+    for index in range(len(dataset)):
+        if cancel_event is not None and cancel_event.is_set():
+            raise TrainingCancelled("Training cancelled.")
+        sample = dataset[index]
+        label = int(sample["target"].item())
+        if label < 0:
+            ignored += 1
+            continue
+        slide_index = int(sample["slide_index"].item())
+        groups.setdefault((slide_index, label), []).append(index)
+
+    rng = random.Random(seed)
+    selected: list[int] = []
+    for indices in groups.values():
+        if len(indices) > max_per_class_slide:
+            selected.extend(rng.sample(indices, max_per_class_slide))
+        else:
+            selected.extend(indices)
+    selected.sort()
+    if not selected:
+        raise ValueError("No labelled patches were available after sampling.")
+    _safe_status(listener, f"Selected {len(selected)} patches ({ignored} ignored).")
+    return Subset(dataset, selected)
+
+
+def _qupath_transform(annotation: Annotation) -> Annotation:
+    props = annotation.properties
+    classification = props.get("classification")
+    if isinstance(classification, dict):
+        name = classification.get("name")
+        if name is not None:
+            props["class"] = str(name)
+    if "measurements" in props:
+        measurements = props.pop("measurements")
+        if isinstance(measurements, dict):
+            props.update(measurements)
+        elif isinstance(measurements, list):
+            for measurement in measurements:
+                if isinstance(measurement, dict) and "name" in measurement and "value" in measurement:
+                    props[str(measurement["name"])] = measurement["value"]
+    if "objectType" in props:
+        props["type"] = props.pop("objectType")
+    return annotation
+
+
+def _safe_status(listener: Any, message: str) -> None:
+    logger.info(message)
+    if listener is None:
+        return
+    try:
+        listener.onStatus(message)
+    except Exception:  # noqa: BLE001
+        logger.debug("Listener status callback failed", exc_info=True)
+
+
+def response_json(result: dict[str, Any]) -> str:
+    return json.dumps({"status": "ok", **result})

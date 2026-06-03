@@ -7,13 +7,16 @@ import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
+import javafx.stage.FileChooser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.tiatoolbox.TIAToolbox;
@@ -46,6 +49,9 @@ public class TIAController {
     @FXML private ChoiceBox<ModelInfo> modelChoice;
     @FXML private ChoiceBox<String> deviceChoice;
     @FXML private Spinner<Integer> batchSpinner;
+    @FXML private CheckBox artifactCheckBox;
+    @FXML private TextField artifactField;
+    @FXML private Button artifactBrowseButton;
     @FXML private RadioButton scopeCurrent;
     @FXML private RadioButton scopeProject;
     @FXML private Label modelDescription;
@@ -81,6 +87,9 @@ public class TIAController {
                 new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 256, TIAPrefs.batchSize.get()));
         TIAPrefs.batchSize.bind(batchSpinner.valueProperty());
 
+        artifactField.disableProperty().bind(artifactCheckBox.selectedProperty().not());
+        artifactBrowseButton.disableProperty().bind(artifactCheckBox.selectedProperty().not());
+
         refreshRuntimeBanner();
     }
 
@@ -110,6 +119,19 @@ public class TIAController {
     }
 
     @FXML
+    private void onBrowseArtifact() {
+        var chooser = new FileChooser();
+        chooser.setTitle(RES.getString("ui.artifact.use"));
+        chooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("Training artifact", "training_artifact.json", "*.json"));
+        var file = chooser.showOpenDialog(runButton.getScene().getWindow());
+        if (file != null) {
+            artifactField.setText(file.toPath().toString());
+            artifactCheckBox.setSelected(true);
+        }
+    }
+
+    @FXML
     private void onCancel() {
         var task = currentTask.get();
         if (task != null) {
@@ -124,8 +146,14 @@ public class TIAController {
             refreshRuntimeBanner();
             return;
         }
+        var useArtifact = artifactCheckBox.isSelected();
         var model = modelChoice.getSelectionModel().getSelectedItem();
-        if (model == null) {
+        if (!useArtifact && model == null) {
+            return;
+        }
+        var artifactPath = artifactField.getText() == null ? "" : artifactField.getText().trim();
+        if (useArtifact && artifactPath.isBlank()) {
+            Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.artifact-not-set"));
             return;
         }
         var batch = resolveScope();
@@ -133,11 +161,15 @@ public class TIAController {
             return;
         }
 
-        var runner = TIAToolbox.builder()
-                .model(model.name())
+        var builder = TIAToolbox.builder()
                 .device(deviceChoice.getValue())
-                .batchSize(batchSpinner.getValue())
-                .build();
+                .batchSize(batchSpinner.getValue());
+        if (useArtifact) {
+            builder.artifactPath(artifactPath);
+        } else {
+            builder.model(model.name());
+        }
+        var runner = builder.build();
 
         var task = inferenceTask(batch, model, runner);
         currentTask.set(task);
@@ -202,8 +234,11 @@ public class TIAController {
                     prefix[0] = entries.size() == 1
                             ? ""
                             : String.format("[%d/%d] %s — ", i + 1, entries.size(), entry.name());
+                    var label = artifactCheckBox.isSelected()
+                            ? java.nio.file.Path.of(artifactField.getText()).getFileName().toString()
+                            : model.name();
                     updateMessage(prefix[0] + MessageFormat.format(
-                            RES.getString("ui.status.running"), model.name()));
+                            RES.getString("ui.status.running"), label));
                     try {
                         var imageData = entry.load();
                         totalAdded += runner.run(imageData, listener);

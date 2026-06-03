@@ -16,7 +16,8 @@ public record InferenceRequest(
         String device,
         int batch_size,
         int num_workers,
-        List<String> classes
+        List<String> classes,
+        String artifact_path
 ) {
     private static final Gson GSON = new Gson();
 

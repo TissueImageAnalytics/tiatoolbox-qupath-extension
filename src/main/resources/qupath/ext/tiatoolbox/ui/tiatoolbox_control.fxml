@@ -2,11 +2,13 @@
 
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.Button?>
+<?import javafx.scene.control.CheckBox?>
 <?import javafx.scene.control.ChoiceBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ProgressBar?>
 <?import javafx.scene.control.RadioButton?>
 <?import javafx.scene.control.Spinner?>
+<?import javafx.scene.control.TextField?>
 <?import javafx.scene.control.ToggleGroup?>
 <?import javafx.scene.control.Tooltip?>
 <?import javafx.scene.layout.ColumnConstraints?>
@@ -39,7 +41,7 @@
             <ColumnConstraints minWidth="80.0"/>
         </columnConstraints>
         <rowConstraints>
-            <RowConstraints/><RowConstraints/><RowConstraints/>
+            <RowConstraints/><RowConstraints/><RowConstraints/><RowConstraints/>
         </rowConstraints>
 
         <Label text="%ui.model" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
@@ -53,6 +55,15 @@
                  GridPane.rowIndex="1" GridPane.columnIndex="2">
             <tooltip><Tooltip text="%ui.batch-size"/></tooltip>
         </Spinner>
+
+        <CheckBox fx:id="artifactCheckBox" text="%ui.artifact.use"
+                  GridPane.rowIndex="2" GridPane.columnIndex="0" GridPane.columnSpan="3"/>
+        <TextField fx:id="artifactField" editable="false"
+                   GridPane.rowIndex="3" GridPane.columnIndex="0" GridPane.columnSpan="2"
+                   GridPane.hgrow="ALWAYS"/>
+        <Button fx:id="artifactBrowseButton" text="%ui.artifact.browse"
+                onAction="#onBrowseArtifact"
+                GridPane.rowIndex="3" GridPane.columnIndex="2"/>
     </GridPane>
 
     <Label fx:id="modelDescription" wrapText="true" minHeight="36.0"/>

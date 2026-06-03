@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.tiatoolbox.ui.RuntimeInstallCommand;
 import qupath.ext.tiatoolbox.ui.TIACommand;
+import qupath.ext.tiatoolbox.ui.TrainingCommand;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
@@ -56,6 +57,11 @@ public class TIAToolboxExtension implements QuPathExtension, GitHubProject {
         var command = new TIACommand(qupath);
         runItem.setOnAction(e -> command.run());
         menu.getItems().add(runItem);
+
+        var trainItem = new MenuItem(RES.getString("menu.train"));
+        var trainCommand = new TrainingCommand(qupath);
+        trainItem.setOnAction(e -> trainCommand.run());
+        menu.getItems().add(trainItem);
 
         var installItem = new MenuItem(RES.getString("menu.install-runtime"));
         var installCommand = new RuntimeInstallCommand(qupath);

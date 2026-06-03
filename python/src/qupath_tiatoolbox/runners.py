@@ -58,6 +58,7 @@ def run_engine(
     batch_size: int = 8,
     num_workers: int = 0,
     classes: Sequence[str] | None = None,
+    artifact_path: str | None = None,
 ) -> dict[str, Any]:
     """Run one tiatoolbox engine on one WSI and return GeoJSON output paths.
 
@@ -66,8 +67,6 @@ def run_engine(
     dict with keys:
         ``geojson``: list[str] of output GeoJSON paths (one per input WSI).
     """
-    EngineCls = _load(engine)
-
     wsi = Path(wsi_path)
     if not wsi.exists():
         raise FileNotFoundError(f"WSI not found: {wsi_path}")
@@ -75,6 +74,17 @@ def run_engine(
     out_dir = Path(save_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    if artifact_path:
+        return _run_artifact_engine(
+            artifact_path=artifact_path,
+            wsi=wsi,
+            out_dir=out_dir,
+            device=device,
+            batch_size=batch_size,
+            num_workers=num_workers,
+        )
+
+    EngineCls = _load(engine)
 
     logger.info(
         "Running %s with model=%s on %s (device=%s, batch_size=%d)",
@@ -105,6 +115,84 @@ def run_engine(
             _relabel_geojson_in_place(p, classes)
 
     return {"geojson": [str(p) for p in geojsons]}
+
+
+def _run_artifact_engine(
+    *,
+    artifact_path: str,
+    wsi: Path,
+    out_dir: Path,
+    device: str,
+    batch_size: int,
+    num_workers: int,
+) -> dict[str, Any]:
+    from .training import build_model
+
+    from tiatoolbox.models.engine.patch_predictor import PatchPredictor
+    from tiatoolbox.models.training import TrainingArtifactManifest
+
+    artifact_file = Path(artifact_path)
+    artifact = TrainingArtifactManifest.load(artifact_file)
+    model_info = dict(artifact.model.get("constructor") or {})
+    model = build_model(
+        model_info,
+        num_classes=int(model_info.get("num_classes") or len(artifact.class_dict or {})),
+    )
+    artifact.load_weights(
+        model,
+        name="best",
+        manifest_path=artifact_file,
+        map_location="cpu",
+        strict=True,
+    )
+
+    setup = artifact.to_engine_setup(
+        "PatchPredictor",
+        manifest_path=artifact_file,
+        include_weights=False,
+    )
+
+    logger.info(
+        "Running PatchPredictor artifact=%s on %s (device=%s, batch_size=%d)",
+        artifact_file,
+        wsi.name,
+        device,
+        batch_size,
+    )
+    eng = PatchPredictor(
+        model=model,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        device=device,
+        verbose=False,
+    )
+
+    run_kwargs = dict(setup.run_kwargs)
+    run_kwargs["batch_size"] = batch_size
+    run_kwargs["num_workers"] = num_workers
+    run_kwargs["device"] = device
+    result = eng.run(
+        images=[str(wsi)],
+        patch_mode=False,
+        save_dir=str(out_dir),
+        overwrite=True,
+        output_type="qupath",
+        **run_kwargs,
+    )
+    geojsons = _collect_geojson_paths(result, out_dir)
+    class_labels = _artifact_classes(artifact)
+    if class_labels:
+        for p in geojsons:
+            _relabel_geojson_in_place(p, class_labels)
+    return {"geojson": [str(p) for p in geojsons]}
+
+
+def _artifact_classes(artifact: Any) -> list[str]:
+    class_dict = artifact.class_dict or {}
+    labels: list[str] = []
+    for key in sorted(class_dict, key=lambda item: int(item)):
+        labels.append(str(class_dict[key]))
+    return labels
 
 
 def _relabel_geojson_in_place(path: Path, classes: Sequence[str]) -> None:

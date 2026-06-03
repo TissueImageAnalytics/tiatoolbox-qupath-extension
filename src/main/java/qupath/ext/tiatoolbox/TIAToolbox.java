@@ -7,6 +7,8 @@ import qupath.ext.tiatoolbox.core.InferenceRequest;
 import qupath.ext.tiatoolbox.core.InferenceResponse;
 import qupath.ext.tiatoolbox.core.ProgressListener;
 import qupath.ext.tiatoolbox.core.ResultImporter;
+import qupath.ext.tiatoolbox.core.TrainingRequest;
+import qupath.ext.tiatoolbox.core.TrainingResponse;
 import qupath.ext.tiatoolbox.install.RuntimePaths;
 import qupath.ext.tiatoolbox.ui.ModelInfo;
 import qupath.ext.tiatoolbox.ui.TIAPrefs;
@@ -116,6 +118,7 @@ public final class TIAToolbox {
         private int numWorkers = 0;
         private List<String> classes;
         private String pythonExecutable;
+        private String artifactPath;
 
         private Builder() {}
 
@@ -152,6 +155,16 @@ public final class TIAToolbox {
         /** Override the human-readable label list for the model's classes. */
         public Builder classes(List<String> classes) { this.classes = classes; return this; }
 
+        /** Use a training artifact manifest instead of a bundled model name. */
+        public Builder artifactPath(String artifactPath) {
+            this.artifactPath = artifactPath;
+            if (artifactPath != null && !artifactPath.isBlank()) {
+                this.engine = "patch_predictor";
+                this.model = "training-artifact";
+            }
+            return this;
+        }
+
         /**
          * Override the bundled runtime Python. Most users should install the
          * runtime from the GUI and leave this unset.
@@ -162,7 +175,7 @@ public final class TIAToolbox {
         }
 
         public TIAToolbox build() {
-            if (model == null || model.isBlank())
+            if ((model == null || model.isBlank()) && (artifactPath == null || artifactPath.isBlank()))
                 throw new IllegalStateException("model is required");
             if (engine == null || engine.isBlank())
                 throw new IllegalStateException(
@@ -180,6 +193,7 @@ public final class TIAToolbox {
     private final int numWorkers;
     private final List<String> classes;
     private final String pythonExecutableOverride;
+    private final String artifactPath;
 
     private TIAToolbox(Builder b) {
         this.model = b.model;
@@ -189,6 +203,7 @@ public final class TIAToolbox {
         this.numWorkers = b.numWorkers;
         this.classes = b.classes;
         this.pythonExecutableOverride = b.pythonExecutable;
+        this.artifactPath = b.artifactPath;
     }
 
     // -- Run entry points -----------------------------------------------------
@@ -232,7 +247,7 @@ public final class TIAToolbox {
                 engine, model,
                 wsiPath.toAbsolutePath().toString(),
                 saveDir.toAbsolutePath().toString(),
-                device, batchSize, numWorkers, classes);
+                device, batchSize, numWorkers, classes, artifactPath);
 
         var bridge = acquireBridge(pythonPath);
 
@@ -268,6 +283,44 @@ public final class TIAToolbox {
                     "Python runtime not installed. Use Extensions → TIAToolbox → "
                             + "Install Python runtime…");
         return p;
+    }
+
+    /** Run a project training request through the shared Python sidecar. */
+    public static TrainingResponse train(TrainingRequest request, ProgressListener listener) {
+        var python = RuntimePaths.installedPython();
+        if (python == null) {
+            throw new IllegalStateException(
+                    "Python runtime not installed. Use Extensions → TIAToolbox → "
+                            + "Install Python runtime…");
+        }
+        var bridge = acquireBridge(python);
+        synchronized (bridge) {
+            try {
+                var responseJson = bridge.runner().runTraining(request.toJson(), listener);
+                var response = TrainingResponse.fromJson(responseJson);
+                if (!response.ok()) {
+                    var msg = response.message() == null ? "Training failed" : response.message();
+                    throw new RuntimeException(msg);
+                }
+                return response;
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    /** Request best-effort cancellation of active training. */
+    public static void cancelTraining() {
+        synchronized (BRIDGE_LOCK) {
+            if (BRIDGE == null) return;
+            try {
+                BRIDGE.runner().cancelTraining();
+            } catch (Exception e) {
+                logger.debug("cancelTraining failed", e);
+            }
+        }
     }
 
     private static Path filePathOf(ImageData<BufferedImage> imageData) {

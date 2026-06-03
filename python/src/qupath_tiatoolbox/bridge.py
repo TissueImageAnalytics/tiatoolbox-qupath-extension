@@ -28,6 +28,7 @@ class TIATask:
 
     def __init__(self, shutdown_event: threading.Event):
         self._shutdown = shutdown_event
+        self._training_cancel = threading.Event()
 
     def ping(self) -> str:
         """Quick reachability check used by the Java side after spawn."""
@@ -73,6 +74,7 @@ class TIATask:
                 batch_size=int(req.get("batch_size", 8)),
                 num_workers=int(req.get("num_workers", 0)),
                 classes=req.get("classes"),
+                artifact_path=req.get("artifact_path"),
             )
         except Exception as exc:  # noqa: BLE001 — cross-process boundary
             logger.exception("Inference failed")
@@ -82,6 +84,42 @@ class TIATask:
 
         _safe_call(listener, "onStatus", "Done.")
         return json.dumps({"status": "ok", **result})
+
+    def runTraining(self, request_json: str, listener: Any) -> str:  # noqa: N802
+        """Run one QuPath project training request."""
+        try:
+            req = json.loads(request_json)
+        except json.JSONDecodeError as exc:
+            return _err(f"invalid request JSON: {exc}")
+
+        self._training_cancel.clear()
+        stop_heartbeat = threading.Event()
+        heartbeat = threading.Thread(
+            target=_heartbeat_loop,
+            args=(listener, stop_heartbeat),
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            from . import training
+
+            result = training.run_training(
+                req,
+                listener=listener,
+                cancel_event=self._training_cancel,
+            )
+        except Exception as exc:  # noqa: BLE001 — cross-process boundary
+            logger.exception("Training failed")
+            return _err(f"{type(exc).__name__}: {exc}", trace=traceback.format_exc())
+        finally:
+            stop_heartbeat.set()
+            self._training_cancel.clear()
+
+        return json.dumps({"status": "ok", **result})
+
+    def cancelTraining(self) -> None:  # noqa: N802
+        """Request cancellation of the active training job."""
+        self._training_cancel.set()
 
     def shutdown(self) -> None:
         """Signal the main thread to stop the ClientServer and exit."""
