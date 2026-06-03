@@ -41,7 +41,7 @@
             <ColumnConstraints minWidth="80.0"/>
         </columnConstraints>
         <rowConstraints>
-            <RowConstraints/><RowConstraints/><RowConstraints/><RowConstraints/>
+            <RowConstraints/><RowConstraints/><RowConstraints/><RowConstraints/><RowConstraints/>
         </rowConstraints>
 
         <Label text="%ui.model" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
@@ -64,6 +64,10 @@
         <Button fx:id="artifactBrowseButton" text="%ui.artifact.browse"
                 onAction="#onBrowseArtifact"
                 GridPane.rowIndex="3" GridPane.columnIndex="2"/>
+
+        <CheckBox fx:id="autoMaskCheckBox" text="%ui.auto-mask"
+                  selected="true"
+                  GridPane.rowIndex="4" GridPane.columnIndex="0" GridPane.columnSpan="3"/>
     </GridPane>
 
     <Label fx:id="modelDescription" wrapText="true" minHeight="36.0"/>

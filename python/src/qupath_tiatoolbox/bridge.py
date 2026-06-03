@@ -75,6 +75,7 @@ class TIATask:
                 num_workers=int(req.get("num_workers", 0)),
                 classes=req.get("classes"),
                 artifact_path=req.get("artifact_path"),
+                auto_get_mask=bool(req.get("auto_get_mask", True)),
             )
         except Exception as exc:  # noqa: BLE001 — cross-process boundary
             logger.exception("Inference failed")

@@ -1,5 +1,8 @@
 package qupath.ext.tiatoolbox.ui;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleObjectProperty;
@@ -28,6 +31,8 @@ import qupath.lib.images.ImageData;
 import qupath.lib.projects.ProjectImageEntry;
 
 import java.awt.image.BufferedImage;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.List;
@@ -52,6 +57,7 @@ public class TIAController {
     @FXML private CheckBox artifactCheckBox;
     @FXML private TextField artifactField;
     @FXML private Button artifactBrowseButton;
+    @FXML private CheckBox autoMaskCheckBox;
     @FXML private RadioButton scopeCurrent;
     @FXML private RadioButton scopeProject;
     @FXML private Label modelDescription;
@@ -76,7 +82,7 @@ public class TIAController {
     private void initialize() {
         modelChoice.setItems(FXCollections.observableArrayList(ModelInfo.loadBundled()));
         modelChoice.getSelectionModel().selectedItemProperty().addListener((obs, old, sel) ->
-                modelDescription.setText(sel == null ? "" : sel.description()));
+                updateModelDescription());
         modelChoice.getSelectionModel().selectFirst();
 
         deviceChoice.setItems(FXCollections.observableArrayList("cpu", "cuda", "mps"));
@@ -89,8 +95,12 @@ public class TIAController {
 
         artifactField.disableProperty().bind(artifactCheckBox.selectedProperty().not());
         artifactBrowseButton.disableProperty().bind(artifactCheckBox.selectedProperty().not());
+        modelChoice.disableProperty().bind(artifactCheckBox.selectedProperty());
+        artifactCheckBox.selectedProperty().addListener((obs, old, selected) -> updateModelDescription());
+        artifactField.textProperty().addListener((obs, old, text) -> updateModelDescription());
 
         refreshRuntimeBanner();
+        updateModelDescription();
     }
 
     /** Show or hide the "runtime not installed" banner and wire Run availability. */
@@ -163,7 +173,8 @@ public class TIAController {
 
         var builder = TIAToolbox.builder()
                 .device(deviceChoice.getValue())
-                .batchSize(batchSpinner.getValue());
+                .batchSize(batchSpinner.getValue())
+                .autoGetMask(autoMaskCheckBox.isSelected());
         if (useArtifact) {
             builder.artifactPath(artifactPath);
         } else {
@@ -289,6 +300,94 @@ public class TIAController {
         currentTask.set(null);
         cancelButton.setDisable(true);
         refreshRuntimeBanner();
+    }
+
+    private void updateModelDescription() {
+        if (artifactCheckBox != null && artifactCheckBox.isSelected()) {
+            modelDescription.setText(artifactDescription());
+            return;
+        }
+        var model = modelChoice == null ? null : modelChoice.getSelectionModel().getSelectedItem();
+        modelDescription.setText(model == null ? "" : model.description());
+    }
+
+    private String artifactDescription() {
+        var text = artifactField.getText() == null ? "" : artifactField.getText().trim();
+        if (text.isBlank()) {
+            return RES.getString("ui.artifact.description.empty");
+        }
+
+        var path = Path.of(text);
+        if (!Files.isRegularFile(path)) {
+            return MessageFormat.format(RES.getString("ui.artifact.description.missing"), text);
+        }
+
+        try {
+            var root = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+            var model = object(root, "model");
+            var metadata = object(root, "metadata");
+            var training = object(root, "training");
+            var classDict = object(root, "class_dict");
+
+            var description = string(model, "description", "Training artifact");
+            var task = string(root, "task_type", "unknown");
+            var classes = classDict == null ? "" : sortedClassLabels(classDict);
+            var patchSize = string(metadata, "patch_size", "?");
+            var stride = string(metadata, "stride", "?");
+            var mpp = string(metadata, "mpp", "?");
+            var bestEpoch = string(training, "best_epoch", "?");
+            var bestValue = string(training, "best_monitor_value", "?");
+
+            return MessageFormat.format(
+                    RES.getString("ui.artifact.description"),
+                    description,
+                    task,
+                    classes,
+                    patchSize,
+                    stride,
+                    mpp,
+                    bestEpoch,
+                    bestValue);
+        } catch (Exception e) {
+            logger.debug("Could not read training artifact {}", text, e);
+            return MessageFormat.format(RES.getString("ui.artifact.description.invalid"), text);
+        }
+    }
+
+    private static JsonObject object(JsonObject root, String key) {
+        if (root == null) return null;
+        var value = root.get(key);
+        return value != null && value.isJsonObject() ? value.getAsJsonObject() : null;
+    }
+
+    private static String string(JsonObject root, String key, String fallback) {
+        if (root == null) return fallback;
+        var value = root.get(key);
+        if (value == null || value.isJsonNull()) return fallback;
+        if (value.isJsonPrimitive()) return value.getAsJsonPrimitive().getAsString();
+        return fallback;
+    }
+
+    private static String sortedClassLabels(JsonObject classDict) {
+        return classDict.entrySet().stream()
+                .sorted((a, b) -> Integer.compare(parseInt(a.getKey()), parseInt(b.getKey())))
+                .map(entry -> valueString(entry.getValue()))
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("");
+    }
+
+    private static int parseInt(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return Integer.MAX_VALUE;
+        }
+    }
+
+    private static String valueString(JsonElement element) {
+        if (element == null || element.isJsonNull()) return "";
+        if (element.isJsonPrimitive()) return element.getAsJsonPrimitive().getAsString();
+        return element.toString();
     }
 
     /**

@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +61,7 @@ def run_engine(
     num_workers: int = 0,
     classes: Sequence[str] | None = None,
     artifact_path: str | None = None,
+    auto_get_mask: bool = True,
 ) -> dict[str, Any]:
     """Run one tiatoolbox engine on one WSI and return GeoJSON output paths.
 
@@ -82,6 +85,7 @@ def run_engine(
             device=device,
             batch_size=batch_size,
             num_workers=num_workers,
+            auto_get_mask=auto_get_mask,
         )
 
     EngineCls = _load(engine)
@@ -105,6 +109,7 @@ def run_engine(
         save_dir=str(out_dir),
         overwrite=True,
         output_type="qupath",
+        auto_get_mask=auto_get_mask,
     )
 
     geojsons = _collect_geojson_paths(result, out_dir)
@@ -125,6 +130,7 @@ def _run_artifact_engine(
     device: str,
     batch_size: int,
     num_workers: int,
+    auto_get_mask: bool,
 ) -> dict[str, Any]:
     from .training import build_model
 
@@ -138,6 +144,8 @@ def _run_artifact_engine(
         model_info,
         num_classes=int(model_info.get("num_classes") or len(artifact.class_dict or {})),
     )
+    if bool((artifact.metadata or {}).get("qupath_training", False)):
+        model.preproc_func = _qupath_training_preproc
     artifact.load_weights(
         model,
         name="best",
@@ -171,6 +179,7 @@ def _run_artifact_engine(
     run_kwargs["batch_size"] = batch_size
     run_kwargs["num_workers"] = num_workers
     run_kwargs["device"] = device
+    run_kwargs["auto_get_mask"] = auto_get_mask
     result = eng.run(
         images=[str(wsi)],
         patch_mode=False,
@@ -195,6 +204,13 @@ def _artifact_classes(artifact: Any) -> list[str]:
     return labels
 
 
+def _qupath_training_preproc(image: np.ndarray) -> np.ndarray:
+    image = np.asarray(image)
+    if np.issubdtype(image.dtype, np.integer):
+        return image.astype(np.float32) / 255.0
+    return image.astype(np.float32, copy=False)
+
+
 def _relabel_geojson_in_place(path: Path, classes: Sequence[str]) -> None:
     """Replace numeric ``properties.classification.name`` values with the
     matching human-readable label from ``classes``.
@@ -214,23 +230,46 @@ def _relabel_geojson_in_place(path: Path, classes: Sequence[str]) -> None:
     features = data.get("features") or []
     relabeled = 0
     for feat in features:
-        cls = (feat.get("properties") or {}).get("classification")
+        props = feat.get("properties") or {}
+        cls = props.get("classification")
         if not isinstance(cls, dict):
             continue
         name = cls.get("name")
-        if isinstance(name, (int, float)):
-            idx = int(name)
-            if 0 <= idx < len(classes):
-                cls["name"] = classes[idx]
-                # Keep the embedded RGB so QuPath's GeoJSON parser remains
-                # happy; the Java importer overrides the colour with QuPath's
-                # built-in PathClass palette where one exists.
-                relabeled += 1
+        idx = _class_index(name)
+        if idx is None:
+            idx = _class_index(props.get("class_value"))
+        if idx is None:
+            idx = _class_index(feat.get("class_value"))
+        if idx is not None and 0 <= idx < len(classes):
+            cls["name"] = classes[idx]
+            feat["name"] = classes[idx]
+            # Keep the embedded RGB so QuPath's GeoJSON parser remains
+            # happy; the Java importer overrides the colour with QuPath's
+            # built-in PathClass palette where one exists.
+            relabeled += 1
+        elif isinstance(name, str) and name in classes:
+            feat["name"] = name
 
     if relabeled:
         with open(path, "w") as fh:
             json.dump(data, fh)
         logger.info("Re-labelled %d/%d features in %s", relabeled, len(features), path)
+
+
+def _class_index(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        index = int(value)
+        return index if float(value) == float(index) else None
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            try:
+                return int(text)
+            except ValueError:
+                return None
+    return None
 
 
 _GEOJSON_SUFFIXES = (".geojson", ".json")

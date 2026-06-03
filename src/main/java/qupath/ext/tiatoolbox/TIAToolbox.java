@@ -119,6 +119,7 @@ public final class TIAToolbox {
         private List<String> classes;
         private String pythonExecutable;
         private String artifactPath;
+        private boolean autoGetMask = true;
 
         private Builder() {}
 
@@ -151,6 +152,12 @@ public final class TIAToolbox {
 
         public Builder batchSize(int batchSize) { this.batchSize = batchSize; return this; }
         public Builder numWorkers(int numWorkers) { this.numWorkers = numWorkers; return this; }
+
+        /** Whether WSI-mode inference should auto-generate a tissue mask. */
+        public Builder autoGetMask(boolean autoGetMask) {
+            this.autoGetMask = autoGetMask;
+            return this;
+        }
 
         /** Override the human-readable label list for the model's classes. */
         public Builder classes(List<String> classes) { this.classes = classes; return this; }
@@ -194,6 +201,7 @@ public final class TIAToolbox {
     private final List<String> classes;
     private final String pythonExecutableOverride;
     private final String artifactPath;
+    private final boolean autoGetMask;
 
     private TIAToolbox(Builder b) {
         this.model = b.model;
@@ -204,6 +212,7 @@ public final class TIAToolbox {
         this.classes = b.classes;
         this.pythonExecutableOverride = b.pythonExecutable;
         this.artifactPath = b.artifactPath;
+        this.autoGetMask = b.autoGetMask;
     }
 
     // -- Run entry points -----------------------------------------------------
@@ -247,7 +256,7 @@ public final class TIAToolbox {
                 engine, model,
                 wsiPath.toAbsolutePath().toString(),
                 saveDir.toAbsolutePath().toString(),
-                device, batchSize, numWorkers, classes, artifactPath);
+                device, batchSize, numWorkers, classes, artifactPath, autoGetMask);
 
         var bridge = acquireBridge(pythonPath);
 

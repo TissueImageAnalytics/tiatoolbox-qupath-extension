@@ -17,7 +17,8 @@ public record InferenceRequest(
         int batch_size,
         int num_workers,
         List<String> classes,
-        String artifact_path
+        String artifact_path,
+        boolean auto_get_mask
 ) {
     private static final Gson GSON = new Gson();
 
