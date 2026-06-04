@@ -7,11 +7,14 @@ import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.collections.transformation.FilteredList;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.RadioButton;
@@ -20,6 +23,7 @@ import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.stage.FileChooser;
+import javafx.util.StringConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.tiatoolbox.TIAToolbox;
@@ -51,7 +55,9 @@ public class TIAController {
             ResourceBundle.getBundle("qupath.ext.tiatoolbox.ui.strings");
 
     @FXML private HBox runtimeMissingBox;
-    @FXML private ChoiceBox<ModelInfo> modelChoice;
+    @FXML private ComboBox<ModelInfo> modelChoice;
+    @FXML private Label modelFilterIcon;
+    @FXML private Button modelInfoButton;
     @FXML private ChoiceBox<String> deviceChoice;
     @FXML private Spinner<Integer> batchSpinner;
     @FXML private CheckBox artifactCheckBox;
@@ -70,6 +76,10 @@ public class TIAController {
     private RuntimeInstallCommand runtimeInstallCommand;
     private final AtomicReference<Task<Integer>> currentTask = new AtomicReference<>();
 
+    /** Full, unfiltered model list; the ComboBox shows a FilteredList view of it. */
+    private final ObservableList<ModelInfo> allModels =
+            FXCollections.observableArrayList(ModelInfo.loadBundled());
+
     public void setQuPath(QuPathGUI qupath) {
         this.qupath = qupath;
         this.runtimeInstallCommand = new RuntimeInstallCommand(qupath, this::refreshRuntimeBanner);
@@ -80,7 +90,7 @@ public class TIAController {
 
     @FXML
     private void initialize() {
-        modelChoice.setItems(FXCollections.observableArrayList(ModelInfo.loadBundled()));
+        installModelFilter();
         modelChoice.getSelectionModel().selectedItemProperty().addListener((obs, old, sel) ->
                 updateModelDescription());
         modelChoice.getSelectionModel().selectFirst();
@@ -103,6 +113,126 @@ public class TIAController {
         updateModelDescription();
     }
 
+    /**
+     * Wire the editable ComboBox so typing in its editor filters the dropdown
+     * by Google-style multi-token substring match across each model's
+     * <em>name</em>, <em>description</em>, and <em>task</em> (case-insensitive).
+     * Typing {@code "nuclei classification"} keeps a model only if both
+     * tokens appear somewhere across those three fields.
+     *
+     * <p>JavaFX has no native filtering ComboBox, so we back it with a
+     * {@link FilteredList} and re-evaluate the predicate from the editor's
+     * text property. We detect "selection echoes" (editor text being set to
+     * a model's display name as a side effect of selection) and skip
+     * filtering in that case, so picking an item doesn't reopen or narrow
+     * the popup.</p>
+     */
+    private void installModelFilter() {
+        var filtered = new FilteredList<>(allModels, m -> true);
+        modelChoice.setItems(filtered);
+
+        modelChoice.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(ModelInfo model) {
+                return model == null ? "" : model.toString();
+            }
+
+            @Override
+            public ModelInfo fromString(String text) {
+                if (text == null || text.isBlank()) {
+                    return modelChoice.getSelectionModel().getSelectedItem();
+                }
+                for (var m : allModels) {
+                    if (m.toString().equalsIgnoreCase(text.trim())) {
+                        return m;
+                    }
+                }
+                return modelChoice.getSelectionModel().getSelectedItem();
+            }
+        });
+
+        TextField editor = modelChoice.getEditor();
+        // Make space on the left so typed text and the prompt don't sit
+        // under the overlaid funnel icon (see FXML modelFilterIcon).
+        editor.setStyle("-fx-padding: 4 6 4 22;");
+
+        editor.textProperty().addListener((obs, old, text) -> {
+            // Selection echo guard: if the editor text exactly equals any
+            // model's display name, treat this as a selection round-trip
+            // (not a filter intent) regardless of which order selection
+            // model and editor text were updated in.
+            final String value = text == null ? "" : text;
+            for (var m : allModels) {
+                if (m.toString().equals(value)) {
+                    return;
+                }
+            }
+            // Tokenise the query on whitespace; every token must match
+            // somewhere across name + description + task. This is the
+            // "google-style" behaviour: "nuclei classification" finds
+            // models whose haystack contains both words, in any order.
+            final String[] tokens = value.trim().toLowerCase().split("\\s+");
+            filtered.setPredicate(m -> {
+                if (tokens.length == 0 || (tokens.length == 1 && tokens[0].isEmpty())) {
+                    return true;
+                }
+                String haystack = (nullToEmpty(m.name()) + " "
+                                 + nullToEmpty(m.description()) + " "
+                                 + nullToEmpty(m.task())).toLowerCase();
+                for (String tok : tokens) {
+                    if (!tok.isEmpty() && !haystack.contains(tok)) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+            // Showing the popup from inside the editor's text listener while
+            // a key is still being processed can leave the editor's caret /
+            // selection in a transient state ("start must be <= end" on
+            // Backspace, JDK-8228055 family). Defer the show() to the next
+            // pulse so the keystroke fully resolves first.
+            if (!value.isBlank()) {
+                Platform.runLater(() -> {
+                    if (!modelChoice.isShowing()) {
+                        modelChoice.show();
+                    }
+                });
+            }
+        });
+    }
+
+    private static String nullToEmpty(String s) {
+        return s == null ? "" : s;
+    }
+
+    /**
+     * Show the selected model's full summary text in an information dialog.
+     * Backed by QuPath's {@link Dialogs#showMessageDialog(String, String)} so
+     * it matches the rest of the UI and avoids a ControlsFX dependency.
+     */
+    @FXML
+    private void onShowModelInfo() {
+        if (artifactCheckBox != null && artifactCheckBox.isSelected()) {
+            Dialogs.showMessageDialog(RES.getString("title"), artifactDescription());
+            return;
+        }
+        var model = modelChoice.getSelectionModel().getSelectedItem();
+        if (model == null) {
+            Dialogs.showMessageDialog(RES.getString("title"),
+                    RES.getString("ui.model.info-none"));
+            return;
+        }
+        var sb = new StringBuilder();
+        sb.append(model.name()).append("\n")
+          .append(RES.getString("ui.engine")).append(": ").append(model.task()).append("\n\n")
+          .append(model.description());
+        if (model.classes() != null && !model.classes().isEmpty()) {
+            sb.append("\n\n").append(RES.getString("ui.model.info-classes")).append(": ")
+              .append(String.join(", ", model.classes()));
+        }
+        Dialogs.showMessageDialog(RES.getString("title"), sb.toString());
+    }
+
     /** Show or hide the "runtime not installed" banner and wire Run availability. */
     private void refreshRuntimeBanner() {
         var runtimeReady = RuntimePaths.installedPython() != null;
@@ -113,8 +243,17 @@ public class TIAController {
         if (!runtimeReady) {
             runButton.setDisable(true);
         } else {
-            runButton.disableProperty().bind(
-                    Bindings.isNull(modelChoice.getSelectionModel().selectedItemProperty()));
+            runButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
+                if (artifactCheckBox != null && artifactCheckBox.isSelected()) {
+                    var path = artifactField == null || artifactField.getText() == null
+                            ? ""
+                            : artifactField.getText().trim();
+                    return path.isBlank();
+                }
+                return modelChoice.getSelectionModel().getSelectedItem() == null;
+            }, artifactCheckBox.selectedProperty(),
+                    artifactField.textProperty(),
+                    modelChoice.getSelectionModel().selectedItemProperty()));
         }
     }
 

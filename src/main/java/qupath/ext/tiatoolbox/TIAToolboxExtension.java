@@ -38,6 +38,9 @@ public class TIAToolboxExtension implements QuPathExtension, GitHubProject {
             new ScriptTemplate("Nucleus segmentation",
                     "TIAToolbox - Nucleus Segmentation.groovy",
                     "qupath/ext/tiatoolbox/scripts/NucleusSegmentation.groovy"),
+            new ScriptTemplate("Nucleus detection",
+                    "TIAToolbox - Nucleus Detection.groovy",
+                    "qupath/ext/tiatoolbox/scripts/NucleusDetection.groovy"),
             new ScriptTemplate("Batch process project",
                     "TIAToolbox - Batch Process Project.groovy",
                     "qupath/ext/tiatoolbox/scripts/BatchProcessProject.groovy")

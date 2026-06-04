@@ -37,7 +37,15 @@ _ENGINES: dict[str, _EngineSpec] = {
     "multi_task_segmentor": _EngineSpec(
         "tiatoolbox.models.engine.multi_task_segmentor", "MultiTaskSegmentor"
     ),
+    "nucleus_detector": _EngineSpec(
+        "tiatoolbox.models.engine.nucleus_detector", "NucleusDetector"
+    ),
 }
+
+
+# Engines whose GeoJSON output already uses class names sourced from the
+# model's class_dict (so the index→label relabel pass should be skipped).
+_ENGINES_WITH_NATIVE_CLASS_NAMES = frozenset({"nucleus_detector"})
 
 
 def _load(engine_name: str):
@@ -103,7 +111,7 @@ def run_engine(
         verbose=False,
     )
 
-    result = eng.run(
+    run_kwargs: dict[str, Any] = dict(
         images=[str(wsi)],
         patch_mode=False,
         save_dir=str(out_dir),
@@ -112,10 +120,23 @@ def run_engine(
         auto_get_mask=auto_get_mask,
     )
 
+    # NucleusDetector accepts a class_dict mapping numeric class IDs to
+    # human-readable labels; when provided, the GeoJSON it writes already
+    # uses those labels (so we skip the later relabel pass).
+    if engine == "nucleus_detector" and classes:
+        run_kwargs["class_dict"] = {i: name for i, name in enumerate(classes)}
+        # Auto-detect tissue so we don't waste compute on background, and
+        # keep memory in check on large slides. These mirror the defaults
+        # used in tiatoolbox's nucleus-detection example notebook.
+        run_kwargs.setdefault("auto_get_mask", True)
+        run_kwargs.setdefault("memory_threshold", 50)
+
+    result = eng.run(**run_kwargs)
+
     geojsons = _collect_geojson_paths(result, out_dir)
     logger.info("Engine produced %d GeoJSON file(s): %s", len(geojsons), geojsons)
 
-    if classes:
+    if classes and engine not in _ENGINES_WITH_NATIVE_CLASS_NAMES:
         for p in geojsons:
             _relabel_geojson_in_place(p, classes)
 
