@@ -65,6 +65,7 @@ public class TrainingController {
     @FXML private Spinner<Integer> maxPatchesSpinner;
     @FXML private Spinner<Integer> seedSpinner;
     @FXML private Spinner<Double> validationSpinner;
+    @FXML private TextField runNameField;
     @FXML private TextField learningRateField;
     @FXML private Label statusLabel;
     @FXML private ProgressBar progressBar;
@@ -194,7 +195,7 @@ public class TrainingController {
             throw new IllegalStateException(RES.getString("training.error.classes"));
         }
 
-        var runDir = trainingRoot().resolve("run-" + RUN_ID_FORMAT.format(LocalDateTime.now()));
+        var runDir = resolveRunDirectory();
         var annotationDir = runDir.resolve("annotations");
         Files.createDirectories(annotationDir);
 
@@ -316,6 +317,26 @@ public class TrainingController {
         return base.resolve("tiatoolbox-training");
     }
 
+    private Path resolveRunDirectory() {
+        var trainingRoot = trainingRoot();
+        var name = runNameField.getText() == null ? "" : runNameField.getText().trim();
+        var runName = safeRunName(name);
+        if (runName.isBlank()) {
+            runName = "run-" + RUN_ID_FORMAT.format(LocalDateTime.now());
+        }
+        var runDir = trainingRoot.resolve(runName);
+        if (!Files.exists(runDir)) {
+            return runDir;
+        }
+
+        var timestamp = RUN_ID_FORMAT.format(LocalDateTime.now());
+        runDir = trainingRoot.resolve(runName + "-" + timestamp);
+        for (int i = 2; Files.exists(runDir); i++) {
+            runDir = trainingRoot.resolve(runName + "-" + timestamp + "-" + i);
+        }
+        return runDir;
+    }
+
     private Task<TrainingResponse> trainingTask(TrainingRequest request) {
         var listener = new FxProgressListener();
         return new Task<>() {
@@ -378,6 +399,16 @@ public class TrainingController {
 
     private static String safeName(String name) {
         return name.replaceAll("[^A-Za-z0-9._-]+", "_");
+    }
+
+    private static String safeRunName(String name) {
+        if (name == null) {
+            return "";
+        }
+        return name.trim()
+                .replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]+", "_")
+                .replaceAll("\\s+", " ")
+                .replaceAll("^[. ]+|[. ]+$", "");
     }
 
     private record ExportedSlide(

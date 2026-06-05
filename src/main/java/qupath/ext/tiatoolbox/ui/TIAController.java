@@ -273,6 +273,10 @@ public class TIAController {
         chooser.setTitle(RES.getString("ui.artifact.use"));
         chooser.getExtensionFilters().add(
                 new FileChooser.ExtensionFilter("Training artifact", "training_artifact.json", "*.json"));
+        var initialDirectory = artifactInitialDirectory();
+        if (initialDirectory != null && Files.isDirectory(initialDirectory)) {
+            chooser.setInitialDirectory(initialDirectory.toFile());
+        }
         var file = chooser.showOpenDialog(runButton.getScene().getWindow());
         if (file != null) {
             artifactField.setText(file.toPath().toString());
@@ -439,6 +443,37 @@ public class TIAController {
         currentTask.set(null);
         cancelButton.setDisable(true);
         refreshRuntimeBanner();
+    }
+
+    private Path artifactInitialDirectory() {
+        var existingText = artifactField.getText() == null ? "" : artifactField.getText().trim();
+        if (!existingText.isBlank()) {
+            var existingPath = Path.of(existingText);
+            var parent = Files.isDirectory(existingPath) ? existingPath : existingPath.getParent();
+            if (parent != null && Files.isDirectory(parent)) {
+                return parent;
+            }
+        }
+
+        var projectBase = projectBaseDirectory();
+        if (projectBase == null) {
+            return null;
+        }
+
+        var trainingRoot = projectBase.resolve("tiatoolbox-training");
+        if (Files.isDirectory(trainingRoot)) {
+            return trainingRoot;
+        }
+        return Files.isDirectory(projectBase) ? projectBase : null;
+    }
+
+    private Path projectBaseDirectory() {
+        if (qupath == null || qupath.getProject() == null || qupath.getProject().getPath() == null) {
+            return null;
+        }
+        var projectPath = qupath.getProject().getPath();
+        var base = Files.isDirectory(projectPath) ? projectPath : projectPath.getParent();
+        return base == null ? null : base;
     }
 
     private void updateModelDescription() {
