@@ -138,6 +138,8 @@ public final class RuntimeInstaller {
         cmd.add(TARGET_PYTHON);
         cmd.add("--project");
         cmd.add(RuntimePaths.runtimeRoot().toString());
+        cmd.add("--reinstall-package");
+        cmd.add("qupath-tiatoolbox");
 
         log.accept("Running: " + String.join(" ", cmd));
 

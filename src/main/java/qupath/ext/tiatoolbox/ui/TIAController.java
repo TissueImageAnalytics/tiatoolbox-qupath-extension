@@ -381,6 +381,7 @@ public class TIAController {
 
                 int totalAdded = 0;
                 int failed = 0;
+                String lastFailure = null;
                 updateProgress(0, entries.size());
                 for (int i = 0; i < entries.size(); i++) {
                     if (isCancelled()) break;
@@ -400,11 +401,15 @@ public class TIAController {
                     } catch (Exception e) {
                         logger.warn("Inference failed on {}", entry.name(), e);
                         failed++;
+                        lastFailure = e.getMessage();
                     }
                     updateProgress(i + 1, entries.size());
                 }
                 if (failed > 0) {
-                    updateMessage(String.format("Completed with %d failure(s).", failed));
+                    updateMessage(String.format(
+                            "Completed with %d failure(s). Last error: %s",
+                            failed,
+                            lastFailure == null || lastFailure.isBlank() ? "unknown" : lastFailure));
                 }
                 return totalAdded;
             }
@@ -413,7 +418,12 @@ public class TIAController {
             protected void succeeded() {
                 resetButtons();
                 statusLabel.textProperty().unbind();
-                statusLabel.setText(RES.getString("ui.status.done") + " (+" + getValue() + " objects)");
+                var finalMessage = getMessage();
+                if (finalMessage != null && finalMessage.startsWith("Completed with ")) {
+                    statusLabel.setText(finalMessage + " (+" + getValue() + " objects)");
+                } else {
+                    statusLabel.setText(RES.getString("ui.status.done") + " (+" + getValue() + " objects)");
+                }
                 progressBar.setProgress(1.0);
             }
 

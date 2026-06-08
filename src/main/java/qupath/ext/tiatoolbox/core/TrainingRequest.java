@@ -5,8 +5,9 @@ import com.google.gson.Gson;
 import java.util.List;
 import java.util.Map;
 
-/** Wire format sent from Java to Python for patch-classifier training. */
+/** Wire format sent from Java to Python for project training. */
 public record TrainingRequest(
+        String task_type,
         List<Slide> slides,
         List<String> classes,
         Map<String, Integer> class_mapping,

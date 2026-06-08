@@ -15,12 +15,17 @@ from torch import nn
 from torch.utils.data import DataLoader, Subset
 
 from tiatoolbox.annotation import Annotation, SQLiteStore
+from tiatoolbox.models.architecture.efficientunet_tissue_mask_model import (
+    EfficientUNetTissueMaskModel,
+)
 from tiatoolbox.models.architecture.vanilla import CNNModel, TimmModel
-from tiatoolbox.models.engine.io_config import IOPatchPredictorConfig
+from tiatoolbox.models.engine.io_config import IOPatchPredictorConfig, IOSegmentorConfig
 from tiatoolbox.models.training import (
     CheckpointConfig,
     ClassificationTask,
     CoverageClassTargetBuilder,
+    MaskTargetBuilder,
+    SegmentationTask,
     SlideAnnotationPatchDataset,
     Trainer,
     TrainerConfig,
@@ -156,16 +161,23 @@ def run_training(
     listener: Any = None,
     cancel_event: Any = None,
 ) -> dict[str, Any]:
-    """Run the v1 QuPath patch-classification training workflow."""
+    """Run a QuPath project training workflow."""
     _safe_status(listener, "Preparing training data...")
+
+    task_type = str(request.get("task_type") or "patch_classification")
+    if task_type not in {"patch_classification", "semantic_segmentation"}:
+        raise ValueError(f"Unsupported training task: {task_type}")
+    is_segmentation = task_type == "semantic_segmentation"
 
     output_dir = Path(request["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     classes = list(request["classes"])
-    if len(classes) < 2:
+    if not is_segmentation and len(classes) < 2:
         raise ValueError("Patch classification training requires at least two classes.")
+    if is_segmentation and not classes:
+        raise ValueError("Semantic segmentation training requires at least one class.")
 
-    class_mapping = {name: index for index, name in enumerate(classes)}
+    class_mapping = _class_mapping(request, classes, first_index=1 if is_segmentation else 0)
     slides = _parse_slides(request.get("slides", []))
     train_slides = [slide for slide in slides if slide.split == "train"]
     val_slides = [slide for slide in slides if slide.split == "val"]
@@ -187,12 +199,7 @@ def run_training(
     seed = int(options.get("seed", 1))
     min_mask_ratio = float(options.get("min_mask_ratio", 0.01))
 
-    target_builder = CoverageClassTargetBuilder(
-        class_mapping=class_mapping,
-        class_property="class",
-        default_label=-100,
-        min_fraction=float(options.get("min_fraction", 0.0)),
-    )
+    target_builder = _target_builder(task_type, class_mapping, options)
 
     train_dataset = _build_dataset(
         slides=train_slides,
@@ -219,7 +226,8 @@ def run_training(
 
     max_per_class_slide = int(options.get("max_patches_per_class_slide", 250))
     _safe_status(listener, f"Sampling training patches from {len(train_dataset)} candidates...")
-    train_dataset = _capped_subset(
+    subsetter = _capped_segmentation_subset if is_segmentation else _capped_subset
+    train_dataset = subsetter(
         train_dataset,
         max_per_class_slide=max_per_class_slide,
         seed=seed,
@@ -228,7 +236,7 @@ def run_training(
     )
     if val_dataset is not None:
         _safe_status(listener, f"Sampling validation patches from {len(val_dataset)} candidates...")
-        val_dataset = _capped_subset(
+        val_dataset = subsetter(
             val_dataset,
             max_per_class_slide=max(1, max_per_class_slide // 4),
             seed=seed + 1,
@@ -237,9 +245,11 @@ def run_training(
         )
 
     _safe_status(listener, "Building model...")
-    model = build_model(model_spec, num_classes=len(classes))
+    class_dict = _class_dict(task_type, classes, class_mapping)
+    num_model_classes = max(int(index) for index in class_dict) + 1
+    model = build_model(model_spec, num_classes=num_model_classes, class_dict=class_dict)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(options.get("learning_rate", 1e-4)))
-    task = ClassificationTask(ignore_index=-100)
+    task = SegmentationTask(ignore_index=-100) if is_segmentation else ClassificationTask(ignore_index=-100)
 
     batch_size = int(options.get("batch_size", 8))
     num_workers = int(options.get("num_workers", 0))
@@ -250,34 +260,15 @@ def run_training(
         else None
     )
 
-    ioconfig = IOPatchPredictorConfig(
-        input_resolutions=[{"units": "mpp", "resolution": mpp}],
-        output_resolutions=[{"units": "mpp", "resolution": mpp}],
-        patch_input_shape=[patch_size, patch_size],
-        stride_shape=[stride, stride],
-    )
-    artifact = TrainingArtifactManifest.from_model(
-        model,
-        task_type="classification",
-        model_constructor={
-            "model_type": model_spec.get("model_type", "CNNModel"),
-            "backbone": model_spec.get("backbone", "resnet18"),
-            "num_classes": len(classes),
-            "pretrained": bool(model_spec.get("pretrained", False)),
-        },
-        model_description=f"{model_spec.get('model_type', 'CNNModel')} {model_spec.get('backbone', 'resnet18')}",
-        class_dict={index: name for name, index in class_mapping.items()},
-        ioconfig=ioconfig,
-        engine="PatchPredictor",
-        run_kwargs={"return_probabilities": True},
-        metadata={
-            "qupath_training": True,
-            "classes": classes,
-            "patch_size": patch_size,
-            "stride": stride,
-            "mpp": mpp,
-            "units": "mpp",
-        },
+    artifact = _build_artifact(
+        task_type=task_type,
+        model=model,
+        model_spec=model_spec,
+        class_dict=class_dict,
+        classes=classes,
+        patch_size=patch_size,
+        stride=stride,
+        mpp=mpp,
     )
 
     monitor = "val_loss" if val_loader is not None else "train_loss"
@@ -319,8 +310,13 @@ def run_training(
     }
 
 
-def build_model(model_spec: dict[str, Any], *, num_classes: int) -> nn.Module:
-    """Construct a supported v1 classification model."""
+def build_model(
+    model_spec: dict[str, Any],
+    *,
+    num_classes: int,
+    class_dict: dict[int, str] | None = None,
+) -> nn.Module:
+    """Construct a supported QuPath training model."""
     model_type = str(model_spec.get("model_type", "CNNModel"))
     backbone = str(model_spec.get("backbone", "resnet18"))
     if model_type == "CNNModel":
@@ -331,7 +327,129 @@ def build_model(model_spec: dict[str, Any], *, num_classes: int) -> nn.Module:
             num_classes=num_classes,
             pretrained=bool(model_spec.get("pretrained", False)),
         )
+    if model_type == "EfficientUNetTissueMaskModel":
+        return EfficientUNetTissueMaskModel(
+            num_classes=num_classes,
+            class_dict=class_dict,
+        )
     raise ValueError(f"Unsupported model_type: {model_type}")
+
+
+def _class_mapping(
+    request: dict[str, Any],
+    classes: list[str],
+    *,
+    first_index: int,
+) -> dict[str, int]:
+    payload = dict(request.get("class_mapping") or {})
+    if payload:
+        return {str(name): int(index) for name, index in payload.items()}
+    return {name: index + first_index for index, name in enumerate(classes)}
+
+
+def _class_dict(
+    task_type: str,
+    classes: list[str],
+    class_mapping: dict[str, int],
+) -> dict[int, str]:
+    labels = {int(index): str(name) for name, index in class_mapping.items()}
+    if task_type == "semantic_segmentation":
+        labels.setdefault(0, "Background")
+    if labels:
+        return dict(sorted(labels.items()))
+    return {index: name for index, name in enumerate(classes)}
+
+
+def _target_builder(
+    task_type: str,
+    class_mapping: dict[str, int],
+    options: dict[str, Any],
+) -> Any:
+    if task_type == "semantic_segmentation":
+        return MaskTargetBuilder(
+            class_mapping=class_mapping,
+            class_property="class",
+            default_label=0,
+        )
+    return CoverageClassTargetBuilder(
+        class_mapping=class_mapping,
+        class_property="class",
+        default_label=-100,
+        min_fraction=float(options.get("min_fraction", 0.0)),
+    )
+
+
+def _build_artifact(
+    *,
+    task_type: str,
+    model: nn.Module,
+    model_spec: dict[str, Any],
+    class_dict: dict[int, str],
+    classes: list[str],
+    patch_size: int,
+    stride: int,
+    mpp: float,
+) -> TrainingArtifactManifest:
+    model_type = str(model_spec.get("model_type", "CNNModel"))
+    backbone = str(model_spec.get("backbone", "resnet18"))
+    constructor = {
+        "model_type": model_type,
+        "backbone": backbone,
+        "num_classes": max(class_dict) + 1,
+        "pretrained": bool(model_spec.get("pretrained", False)),
+    }
+    metadata = {
+        "qupath_training": True,
+        "classes": classes,
+        "patch_size": patch_size,
+        "stride": stride,
+        "mpp": mpp,
+        "units": "mpp",
+    }
+    description = f"{model_type} {backbone}"
+
+    if task_type == "semantic_segmentation":
+        ioconfig = IOSegmentorConfig(
+            input_resolutions=[{"units": "mpp", "resolution": mpp}],
+            output_resolutions=[{"units": "mpp", "resolution": mpp}],
+            patch_input_shape=[patch_size, patch_size],
+            patch_output_shape=[patch_size, patch_size],
+            stride_shape=[stride, stride],
+            save_resolution={"units": "mpp", "resolution": mpp},
+            ignore_index=0,
+        )
+        return TrainingArtifactManifest.from_model(
+            model,
+            task_type="semantic_segmentation",
+            model_constructor=constructor,
+            model_description=description,
+            class_dict=class_dict,
+            ioconfig=ioconfig,
+            engine="SemanticSegmentor",
+            metadata={
+                **metadata,
+                "semantic_background_label": 0,
+                "semantic_min_confidence": 0.5,
+            },
+        )
+
+    ioconfig = IOPatchPredictorConfig(
+        input_resolutions=[{"units": "mpp", "resolution": mpp}],
+        output_resolutions=[{"units": "mpp", "resolution": mpp}],
+        patch_input_shape=[patch_size, patch_size],
+        stride_shape=[stride, stride],
+    )
+    return TrainingArtifactManifest.from_model(
+        model,
+        task_type="classification",
+        model_constructor=constructor,
+        model_description=description,
+        class_dict=class_dict,
+        ioconfig=ioconfig,
+        engine="PatchPredictor",
+        run_kwargs={"return_probabilities": True},
+        metadata=metadata,
+    )
 
 
 def _parse_slides(payload: list[dict[str, Any]]) -> list[_SlideSpec]:
@@ -381,7 +499,7 @@ def _build_dataset(
     *,
     slides: list[_SlideSpec],
     stores: list[Path],
-    target_builder: CoverageClassTargetBuilder,
+    target_builder: Any,
     patch_size: int,
     stride: int,
     mpp: float,
@@ -476,6 +594,85 @@ def _capped_subset(
     return Subset(dataset, selected)
 
 
+def _capped_segmentation_subset(
+    dataset: SlideAnnotationPatchDataset,
+    *,
+    max_per_class_slide: int,
+    seed: int,
+    listener: Any,
+    cancel_event: Any,
+) -> Subset:
+    if max_per_class_slide <= 0:
+        raise ValueError("`max_patches_per_class_slide` must be positive.")
+
+    output_shape = _target_output_shape(dataset)
+    candidate_indices_by_slide: dict[int, list[int]] = {}
+    for candidate_index, slide_index in enumerate(dataset.sample_slide_indices.tolist()):
+        candidate_indices_by_slide.setdefault(int(slide_index), []).append(candidate_index)
+
+    rng = random.Random(seed)
+    selected: set[int] = set()
+    ignored = 0
+    evaluated = 0
+    for slide_number, (slide_index, candidate_indices) in enumerate(
+        sorted(candidate_indices_by_slide.items()),
+        start=1,
+    ):
+        if cancel_event is not None and cancel_event.is_set():
+            raise TrainingCancelled("Training cancelled.")
+
+        store = dataset._get_store(slide_index)
+        slide_labels = {label for label in _store_labels(store, dataset.target_builder) if label > 0}
+        selected_counts = {label: 0 for label in slide_labels}
+        rng.shuffle(candidate_indices)
+        _safe_status(
+            listener,
+            (
+                f"Sampling slide {slide_number}/{len(candidate_indices_by_slide)} "
+                f"from {len(candidate_indices)} candidates..."
+            ),
+        )
+
+        for index in candidate_indices:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TrainingCancelled("Training cancelled.")
+            if selected_counts and all(
+                count >= max_per_class_slide for count in selected_counts.values()
+            ):
+                break
+
+            labels = _candidate_segmentation_labels(dataset, index, output_shape)
+            evaluated += 1
+            labels = {label for label in labels if label in selected_counts}
+            if not labels:
+                ignored += 1
+                continue
+
+            useful_labels = [
+                label
+                for label in labels
+                if selected_counts.get(label, 0) < max_per_class_slide
+            ]
+            if not useful_labels:
+                continue
+
+            selected.add(index)
+            for label in useful_labels:
+                selected_counts[label] = selected_counts.get(label, 0) + 1
+
+    if not selected:
+        raise ValueError("No labelled segmentation patches were available after sampling.")
+    selected_indices = sorted(selected)
+    _safe_status(
+        listener,
+        (
+            f"Selected {len(selected_indices)} patches after evaluating "
+            f"{evaluated}/{len(dataset)} candidates ({ignored} ignored)."
+        ),
+    )
+    return Subset(dataset, selected_indices)
+
+
 def _target_output_shape(dataset: SlideAnnotationPatchDataset) -> tuple[int, int]:
     patch_size = dataset.patch_size
     if isinstance(patch_size, (tuple, list)):
@@ -487,7 +684,7 @@ def _target_output_shape(dataset: SlideAnnotationPatchDataset) -> tuple[int, int
 
 def _store_labels(
     store: SQLiteStore,
-    target_builder: CoverageClassTargetBuilder,
+    target_builder: Any,
 ) -> set[int]:
     class_mapping = dict(getattr(target_builder, "class_mapping", {}) or {})
     class_property = str(getattr(target_builder, "class_property", "class"))
@@ -538,6 +735,36 @@ def _candidate_label(
     if isinstance(target, np.ndarray):
         return int(np.asarray(target).item())
     return int(target)
+
+
+def _candidate_segmentation_labels(
+    dataset: SlideAnnotationPatchDataset,
+    index: int,
+    output_shape: tuple[int, int],
+) -> set[int]:
+    slide_index = int(dataset.sample_slide_indices[index])
+    bounds_at_resolution = tuple(
+        int(value) for value in dataset.sample_bounds[index].tolist()
+    )
+    reader = dataset._get_reader(slide_index)
+    bounds_at_baseline = tuple(
+        float(value)
+        for value in reader.bounds_at_resolution_to_baseline(
+            bounds_at_resolution,
+            dataset.resolution,
+            dataset.units,
+        )
+    )
+    target = dataset.target_builder.create_target(
+        store=dataset._get_store(slide_index),
+        patch_bounds=bounds_at_baseline,
+        output_shape=output_shape,
+    )
+    if isinstance(target, torch.Tensor):
+        values = target.detach().cpu().numpy()
+    else:
+        values = np.asarray(target)
+    return {int(value) for value in np.unique(values) if int(value) > 0}
 
 
 def _qupath_transform(annotation: Annotation) -> Annotation:

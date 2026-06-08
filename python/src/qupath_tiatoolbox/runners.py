@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -134,6 +135,9 @@ def run_engine(
     result = eng.run(**run_kwargs)
 
     geojsons = _collect_geojson_paths(result, out_dir)
+    if engine == "semantic_segmentor":
+        for p in geojsons:
+            _sanitize_geojson_for_qupath(p)
     logger.info("Engine produced %d GeoJSON file(s): %s", len(geojsons), geojsons)
 
     if classes and engine not in _ENGINES_WITH_NATIVE_CLASS_NAMES:
@@ -155,18 +159,28 @@ def _run_artifact_engine(
 ) -> dict[str, Any]:
     from .training import build_model
 
-    from tiatoolbox.models.engine.patch_predictor import PatchPredictor
     from tiatoolbox.models.training import TrainingArtifactManifest
 
     artifact_file = Path(artifact_path)
     artifact = TrainingArtifactManifest.load(artifact_file)
+    engine_name = _artifact_engine_name(artifact)
     model_info = dict(artifact.model.get("constructor") or {})
+    class_dict = artifact.class_dict or {}
+    num_classes = int(model_info.get("num_classes") or _num_classes_from_dict(class_dict))
     model = build_model(
         model_info,
-        num_classes=int(model_info.get("num_classes") or len(artifact.class_dict or {})),
+        num_classes=num_classes,
+        class_dict=class_dict,
     )
-    if bool((artifact.metadata or {}).get("qupath_training", False)):
+    qupath_training = bool((artifact.metadata or {}).get("qupath_training", False))
+    if qupath_training:
         model.preproc_func = _qupath_training_preproc
+        if engine_name == "SemanticSegmentor":
+            min_confidence = float((artifact.metadata or {}).get("semantic_min_confidence", 0.5))
+            model.postproc_func = partial(
+                _qupath_semantic_postproc,
+                min_confidence=min_confidence,
+            )
     artifact.load_weights(
         model,
         name="best",
@@ -176,19 +190,21 @@ def _run_artifact_engine(
     )
 
     setup = artifact.to_engine_setup(
-        "PatchPredictor",
+        engine_name,
         manifest_path=artifact_file,
         include_weights=False,
     )
 
+    EngineCls = _artifact_engine_class(engine_name)
     logger.info(
-        "Running PatchPredictor artifact=%s on %s (device=%s, batch_size=%d)",
+        "Running %s artifact=%s on %s (device=%s, batch_size=%d)",
+        engine_name,
         artifact_file,
         wsi.name,
         device,
         batch_size,
     )
-    eng = PatchPredictor(
+    eng = EngineCls(
         model=model,
         batch_size=batch_size,
         num_workers=num_workers,
@@ -210,11 +226,41 @@ def _run_artifact_engine(
         **run_kwargs,
     )
     geojsons = _collect_geojson_paths(result, out_dir)
-    class_labels = _artifact_classes(artifact)
+    if engine_name == "SemanticSegmentor":
+        for p in geojsons:
+            _sanitize_geojson_for_qupath(p)
+    class_labels = _artifact_classes(artifact) if engine_name == "PatchPredictor" else []
     if class_labels:
         for p in geojsons:
             _relabel_geojson_in_place(p, class_labels)
     return {"geojson": [str(p) for p in geojsons]}
+
+
+def _artifact_engine_name(artifact: Any) -> str:
+    engine_configs = artifact.engine_configs or {}
+    if len(engine_configs) == 1:
+        return str(next(iter(engine_configs)))
+    if artifact.task_type == "semantic_segmentation":
+        return "SemanticSegmentor"
+    return "PatchPredictor"
+
+
+def _artifact_engine_class(engine_name: str) -> Any:
+    if engine_name == "PatchPredictor":
+        from tiatoolbox.models.engine.patch_predictor import PatchPredictor
+
+        return PatchPredictor
+    if engine_name == "SemanticSegmentor":
+        from tiatoolbox.models.engine.semantic_segmentor import SemanticSegmentor
+
+        return SemanticSegmentor
+    raise ValueError(f"Unsupported training artifact engine: {engine_name}")
+
+
+def _num_classes_from_dict(class_dict: dict[Any, Any]) -> int:
+    if not class_dict:
+        return 1
+    return max(int(key) for key in class_dict) + 1
 
 
 def _artifact_classes(artifact: Any) -> list[str]:
@@ -230,6 +276,15 @@ def _qupath_training_preproc(image: np.ndarray) -> np.ndarray:
     if np.issubdtype(image.dtype, np.integer):
         return image.astype(np.float32) / 255.0
     return image.astype(np.float32, copy=False)
+
+
+def _qupath_semantic_postproc(image: Any, *, min_confidence: float = 0.5) -> Any:
+    image = np.asarray(image)
+    if image.shape[-1] == 1:
+        return (image[..., 0] >= min_confidence).astype(np.uint8)
+    labels = image.argmax(axis=-1).astype(np.uint8, copy=False)
+    labels[image.max(axis=-1) < min_confidence] = 0
+    return labels
 
 
 def _relabel_geojson_in_place(path: Path, classes: Sequence[str]) -> None:
@@ -275,6 +330,110 @@ def _relabel_geojson_in_place(path: Path, classes: Sequence[str]) -> None:
         with open(path, "w") as fh:
             json.dump(data, fh)
         logger.info("Re-labelled %d/%d features in %s", relabeled, len(features), path)
+
+
+def _sanitize_geojson_for_qupath(path: Path, min_area: float = 4.0) -> None:
+    """Repair/drop polygon features that QuPath's GeoJSON reader rejects.
+
+    Semantic segmentation masks can contour into self-intersecting rings or
+    zero-area slivers. QuPath reduces geometry precision while importing and a
+    single bad feature can make ``PathIO.readObjects`` reject the whole file, so
+    repair valid polygonal parts and discard tiny fragments before Java sees it.
+    """
+    try:
+        from shapely.geometry import GeometryCollection, MultiPolygon, Polygon
+        from shapely.geometry import mapping, shape
+        try:
+            from shapely import make_valid
+        except ImportError:  # pragma: no cover - older Shapely fallback
+            try:
+                from shapely.validation import make_valid
+            except ImportError:  # pragma: no cover
+                make_valid = None
+    except ImportError as exc:
+        logger.warning("Could not sanitize %s; Shapely is unavailable: %s", path, exc)
+        return
+
+    try:
+        with open(path, "r") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not sanitize %s: %s", path, exc)
+        return
+
+    features = data.get("features") or []
+    sanitized: list[dict[str, Any]] = []
+    repaired = 0
+    dropped = 0
+    split = 0
+
+    for feat in features:
+        try:
+            geom = shape(feat.get("geometry"))
+            if geom.is_empty or geom.area < min_area:
+                dropped += 1
+                continue
+            if not geom.is_valid:
+                repaired += 1
+                geom = make_valid(geom) if make_valid is not None else geom.buffer(0)
+
+            parts = []
+            for poly in _polygon_parts(geom, Polygon, MultiPolygon, GeometryCollection):
+                if poly.is_empty or poly.area < min_area:
+                    continue
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                if poly.is_empty or poly.area < min_area or not poly.is_valid:
+                    continue
+                parts.append(poly)
+
+            if not parts:
+                dropped += 1
+                continue
+            out_geom = parts[0] if len(parts) == 1 else MultiPolygon(parts)
+            if len(parts) > 1:
+                split += 1
+            out = dict(feat)
+            out["geometry"] = mapping(out_geom)
+            sanitized.append(out)
+        except (TypeError, ValueError, KeyError):
+            dropped += 1
+
+    if len(sanitized) == len(features) and repaired == 0 and dropped == 0 and split == 0:
+        return
+
+    data["features"] = sanitized
+    try:
+        with open(path, "w") as fh:
+            json.dump(data, fh, separators=(",", ":"))
+    except OSError as exc:
+        logger.warning("Could not write sanitized GeoJSON %s: %s", path, exc)
+        return
+
+    logger.info(
+        "Sanitized %s for QuPath: kept=%d/%d repaired=%d dropped=%d multipart=%d",
+        path,
+        len(sanitized),
+        len(features),
+        repaired,
+        dropped,
+        split,
+    )
+
+
+def _polygon_parts(geom: Any, polygon_type: Any, multipolygon_type: Any, collection_type: Any) -> list[Any]:
+    if geom.is_empty:
+        return []
+    if isinstance(geom, polygon_type):
+        return [geom]
+    if isinstance(geom, multipolygon_type):
+        return list(geom.geoms)
+    if isinstance(geom, collection_type):
+        parts: list[Any] = []
+        for child in geom.geoms:
+            parts.extend(_polygon_parts(child, polygon_type, multipolygon_type, collection_type))
+        return parts
+    return []
 
 
 def _class_index(value: Any) -> int | None:

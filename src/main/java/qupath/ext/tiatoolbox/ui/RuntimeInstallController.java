@@ -15,6 +15,7 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.tiatoolbox.TIAToolbox;
 import qupath.ext.tiatoolbox.install.RuntimeInstallOptions;
 import qupath.ext.tiatoolbox.install.RuntimeInstaller;
 import qupath.ext.tiatoolbox.install.RuntimePaths;
@@ -139,6 +140,7 @@ public class RuntimeInstallController {
                 var installer = new RuntimeInstaller(sink);
                 currentInstaller.set(installer);
                 try {
+                    TIAToolbox.closeBridge();
                     return installer.install(options);
                 } finally {
                     currentInstaller.compareAndSet(installer, null);

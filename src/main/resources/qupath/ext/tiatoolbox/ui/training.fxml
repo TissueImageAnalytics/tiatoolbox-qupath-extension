@@ -35,6 +35,7 @@
             <RowConstraints/>
             <RowConstraints/>
             <RowConstraints/>
+            <RowConstraints/>
         </rowConstraints>
 
         <Label text="%training.project" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
@@ -43,30 +44,34 @@
         <Button fx:id="refreshButton" text="%training.refresh" onAction="#onRefresh"
                 GridPane.rowIndex="0" GridPane.columnIndex="2"/>
 
-        <Label text="%training.backbone" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
-        <ChoiceBox fx:id="backboneChoice" maxWidth="Infinity"
+        <Label text="%training.task" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+        <ChoiceBox fx:id="taskChoice" maxWidth="Infinity"
                    GridPane.rowIndex="1" GridPane.columnIndex="1" GridPane.columnSpan="2"/>
 
-        <Label text="%training.run-name" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+        <Label text="%training.backbone" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+        <ChoiceBox fx:id="backboneChoice" maxWidth="Infinity"
+                   GridPane.rowIndex="2" GridPane.columnIndex="1" GridPane.columnSpan="2"/>
+
+        <Label text="%training.run-name" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
         <TextField fx:id="runNameField" promptText="%training.run-name.prompt"
-                   GridPane.rowIndex="2" GridPane.columnIndex="1" GridPane.columnSpan="2"
+                   GridPane.rowIndex="3" GridPane.columnIndex="1" GridPane.columnSpan="2"
                    GridPane.hgrow="ALWAYS"/>
 
-        <Label text="%ui.device" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+        <Label text="%ui.device" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
         <ChoiceBox fx:id="deviceChoice" maxWidth="Infinity"
-                   GridPane.rowIndex="3" GridPane.columnIndex="1"/>
+                   GridPane.rowIndex="4" GridPane.columnIndex="1"/>
 
-        <Label text="%training.epochs" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
+        <Label text="%training.epochs" GridPane.rowIndex="5" GridPane.columnIndex="0"/>
         <Spinner fx:id="epochsSpinner" editable="true" prefWidth="110.0"
-                 GridPane.rowIndex="4" GridPane.columnIndex="1"/>
-
-        <Label text="%ui.batch-size" GridPane.rowIndex="5" GridPane.columnIndex="0"/>
-        <Spinner fx:id="batchSpinner" editable="true" prefWidth="110.0"
                  GridPane.rowIndex="5" GridPane.columnIndex="1"/>
 
-        <Label text="%training.learning-rate" GridPane.rowIndex="6" GridPane.columnIndex="0"/>
+        <Label text="%ui.batch-size" GridPane.rowIndex="6" GridPane.columnIndex="0"/>
+        <Spinner fx:id="batchSpinner" editable="true" prefWidth="110.0"
+                 GridPane.rowIndex="6" GridPane.columnIndex="1"/>
+
+        <Label text="%training.learning-rate" GridPane.rowIndex="7" GridPane.columnIndex="0"/>
         <TextField fx:id="learningRateField" prefWidth="110.0"
-                   GridPane.rowIndex="6" GridPane.columnIndex="1"/>
+                   GridPane.rowIndex="7" GridPane.columnIndex="1"/>
     </GridPane>
 
     <GridPane hgap="8.0" vgap="6.0">

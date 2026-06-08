@@ -44,7 +44,7 @@ import java.util.ResourceBundle;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
-/** Controller for v1 patch-classifier training. */
+/** Controller for QuPath project training. */
 public class TrainingController {
 
     private static final Logger logger = LoggerFactory.getLogger(TrainingController.class);
@@ -52,9 +52,12 @@ public class TrainingController {
             ResourceBundle.getBundle("qupath.ext.tiatoolbox.ui.strings");
     private static final DateTimeFormatter RUN_ID_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+    private static final String TASK_PATCH_CLASSIFICATION = "patch_classification";
+    private static final String TASK_SEMANTIC_SEGMENTATION = "semantic_segmentation";
 
     @FXML private Label projectLabel;
     @FXML private VBox classBox;
+    @FXML private ChoiceBox<String> taskChoice;
     @FXML private ChoiceBox<String> backboneChoice;
     @FXML private ChoiceBox<String> deviceChoice;
     @FXML private Spinner<Integer> epochsSpinner;
@@ -83,15 +86,14 @@ public class TrainingController {
 
     @FXML
     private void initialize() {
-        backboneChoice.setItems(FXCollections.observableArrayList(
-                "CNNModel:resnet18",
-                "CNNModel:resnet34",
-                "CNNModel:resnet50",
-                "CNNModel:densenet121",
-                "CNNModel:mobilenet_v3_small",
-                "TimmModel:efficientnet_b0"
+        taskChoice.setItems(FXCollections.observableArrayList(
+                RES.getString("training.task.patch-classification"),
+                RES.getString("training.task.semantic-segmentation")
         ));
-        backboneChoice.getSelectionModel().selectFirst();
+        taskChoice.getSelectionModel().selectFirst();
+        taskChoice.getSelectionModel().selectedItemProperty().addListener(
+                (obs, old, selected) -> updateTaskOptions());
+        updateTaskOptions();
 
         deviceChoice.setItems(FXCollections.observableArrayList("auto", "cpu", "cuda", "mps"));
         deviceChoice.getSelectionModel().select("auto");
@@ -157,9 +159,10 @@ public class TrainingController {
             for (var name : classes) {
                 var cb = new CheckBox(name);
                 cb.setSelected(true);
+                cb.selectedProperty().addListener((obs, old, selected) -> updateTrainAvailability());
                 classBox.getChildren().add(cb);
             }
-            trainButton.setDisable(classes.size() < 2);
+            updateTrainAvailability();
             statusLabel.setText(MessageFormat.format(
                     RES.getString("training.status.classes"), classes.size()));
         } catch (Exception e) {
@@ -167,6 +170,27 @@ public class TrainingController {
             statusLabel.setText(String.format(RES.getString("ui.status.error"), e.getMessage()));
             trainButton.setDisable(true);
         }
+    }
+
+    private void updateTaskOptions() {
+        if (backboneChoice == null) {
+            return;
+        }
+        if (TASK_SEMANTIC_SEGMENTATION.equals(selectedTaskType())) {
+            backboneChoice.setItems(FXCollections.observableArrayList(
+                    "EfficientUNetTissueMaskModel:efficientnet_b0"));
+        } else {
+            backboneChoice.setItems(FXCollections.observableArrayList(
+                    "CNNModel:resnet18",
+                    "CNNModel:resnet34",
+                    "CNNModel:resnet50",
+                    "CNNModel:densenet121",
+                    "CNNModel:mobilenet_v3_small",
+                    "TimmModel:efficientnet_b0"
+            ));
+        }
+        backboneChoice.getSelectionModel().selectFirst();
+        updateTrainAvailability();
     }
 
     private List<String> discoverProjectClasses() throws Exception {
@@ -191,8 +215,12 @@ public class TrainingController {
         }
 
         var selectedClasses = selectedClasses();
-        if (selectedClasses.size() < 2) {
-            throw new IllegalStateException(RES.getString("training.error.classes"));
+        var taskType = selectedTaskType();
+        if (selectedClasses.size() < minimumClassesForTask()) {
+            var key = TASK_SEMANTIC_SEGMENTATION.equals(taskType)
+                    ? "training.error.classes.segmentation"
+                    : "training.error.classes";
+            throw new IllegalStateException(RES.getString(key));
         }
 
         var runDir = resolveRunDirectory();
@@ -226,8 +254,9 @@ public class TrainingController {
 
         var slides = splitSlides(candidates, selectedClasses);
         var mapping = new LinkedHashMap<String, Integer>();
+        int firstClassIndex = TASK_SEMANTIC_SEGMENTATION.equals(taskType) ? 1 : 0;
         for (int i = 0; i < selectedClasses.size(); i++) {
-            mapping.put(selectedClasses.get(i), i);
+            mapping.put(selectedClasses.get(i), i + firstClassIndex);
         }
 
         var spec = parseBackbone(backboneChoice.getValue());
@@ -236,6 +265,7 @@ public class TrainingController {
             throw new IllegalStateException(RES.getString("training.error.mpp"));
         }
         var request = new TrainingRequest(
+                taskType,
                 slides,
                 selectedClasses,
                 mapping,
@@ -257,6 +287,25 @@ public class TrainingController {
         Files.writeString(runDir.resolve("training_request.json"),
                 request.toJson(), StandardCharsets.UTF_8);
         return request;
+    }
+
+    private String selectedTaskType() {
+        var selected = taskChoice == null ? null : taskChoice.getValue();
+        if (RES.getString("training.task.semantic-segmentation").equals(selected)) {
+            return TASK_SEMANTIC_SEGMENTATION;
+        }
+        return TASK_PATCH_CLASSIFICATION;
+    }
+
+    private int minimumClassesForTask() {
+        return TASK_SEMANTIC_SEGMENTATION.equals(selectedTaskType()) ? 1 : 2;
+    }
+
+    private void updateTrainAvailability() {
+        var running = currentTask.get() != null;
+        var hasProject = qupath != null && qupath.getProject() != null;
+        var enoughClasses = selectedClasses().size() >= minimumClassesForTask();
+        trainButton.setDisable(running || !hasProject || !enoughClasses);
     }
 
     private List<String> selectedClasses() {
@@ -386,9 +435,9 @@ public class TrainingController {
 
     private void setRunning(boolean running) {
         refreshButton.setDisable(running);
-        trainButton.setDisable(running);
         cancelButton.setDisable(!running);
         currentTask.set(running ? currentTask.get() : null);
+        updateTrainAvailability();
     }
 
     private static Path filePathOf(ImageData<BufferedImage> imageData) {
