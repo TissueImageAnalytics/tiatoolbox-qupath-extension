@@ -145,11 +145,9 @@ public class TIAController {
                 editor.textProperty().isNotEmpty());
         modelClearButton.managedProperty().bind(
                 modelClearButton.visibleProperty());
-        // When the field gains focus and its content is the previously-
-        // selected model's display name (rather than a partial query the
-        // user was already typing), clear it so they can immediately type
-        // a fresh search. Mid-edit refocus is left alone — the text won't
-        // match the selection in that state, so this guard skips clearing.
+        // Filter as the user types. Selection-driven "echo" updates (where
+        // the editor text is set to a model's display name) are detected below
+        // and ignored so choosing an item doesn't re-filter or reopen the popup.
         editor.textProperty().addListener((obs, old, text) -> {
             // Selection echo guard: if the editor text exactly equals any
             // model's display name, treat this as a selection round-trip
