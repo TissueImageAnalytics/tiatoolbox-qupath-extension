@@ -17,6 +17,7 @@ import javafx.scene.layout.VBox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.tiatoolbox.TIAToolbox;
+import qupath.ext.tiatoolbox.core.ImageServerCoordinates;
 import qupath.ext.tiatoolbox.core.ProgressListener;
 import qupath.ext.tiatoolbox.core.TrainingRequest;
 import qupath.ext.tiatoolbox.core.TrainingResponse;
@@ -245,7 +246,13 @@ public class TrainingController {
                     objects,
                     PathIO.GeoJsonExportOptions.FEATURE_COLLECTION,
                     PathIO.GeoJsonExportOptions.EXCLUDE_MEASUREMENTS);
-            candidates.add(new ExportedSlide(entry, wsiPath, geojson));
+            var origin = ImageServerCoordinates.displayOriginInFullSlideCoordinates(imageData.getServer());
+            if (!origin.isZero()) {
+                logger.info(
+                        "Training annotations for {} will be shifted into source-slide coordinates by dx={}, dy={}",
+                        entry.getImageName(), origin.x(), origin.y());
+            }
+            candidates.add(new ExportedSlide(entry, wsiPath, geojson, origin.x(), origin.y()));
         }
 
         if (candidates.size() < 2) {
@@ -346,7 +353,9 @@ public class TrainingController {
                         slide.entry.getImageName(),
                         slide.wsiPath.toAbsolutePath().toString(),
                         slide.geojson.toAbsolutePath().toString(),
-                        valSet.contains(slide) ? "val" : "train"))
+                        valSet.contains(slide) ? "val" : "train",
+                        slide.originX,
+                        slide.originY))
                 .collect(Collectors.toList());
     }
 
@@ -463,7 +472,9 @@ public class TrainingController {
     private record ExportedSlide(
             ProjectImageEntry<BufferedImage> entry,
             Path wsiPath,
-            Path geojson
+            Path geojson,
+            double originX,
+            double originY
     ) {}
 
     private static final class FxProgressListener implements ProgressListener {

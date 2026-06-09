@@ -3,13 +3,10 @@ package qupath.ext.tiatoolbox.core;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.images.ImageData;
-import qupath.lib.images.servers.ImageServer;
-import qupath.lib.images.servers.CroppedImageServer;
 import qupath.lib.io.PathIO;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
@@ -74,62 +71,8 @@ public final class ResultImporter {
     }
 
     private static CoordinateShift coordinateShiftFor(ImageData<BufferedImage> imageData) {
-        var server = imageData.getServer();
-        if (server instanceof CroppedImageServer cropped) {
-            var region = cropped.getCropRegion();
-            return new CoordinateShift(-region.getX(), -region.getY());
-        }
-        return openSlideCoordinateShiftFor(server);
-    }
-
-    private static CoordinateShift openSlideCoordinateShiftFor(ImageServer<BufferedImage> server) {
-        if (!"OpenSlide".equals(server.getServerType())) {
-            return CoordinateShift.NONE;
-        }
-        try {
-            var method = server.getClass().getMethod("dumpMetadata");
-            var metadata = method.invoke(server);
-            if (metadata instanceof String json) {
-                return openSlideCoordinateShiftFromMetadata(
-                        JsonParser.parseString(json),
-                        server.getWidth(),
-                        server.getHeight());
-            }
-        } catch (ReflectiveOperationException | JsonParseException | IllegalStateException e) {
-            logger.debug("Could not read OpenSlide bounds metadata for coordinate correction", e);
-        }
-        return CoordinateShift.NONE;
-    }
-
-    static CoordinateShift openSlideCoordinateShiftFromMetadata(JsonElement metadata, int serverWidth, int serverHeight) {
-        if (metadata == null || !metadata.isJsonObject()) {
-            return CoordinateShift.NONE;
-        }
-        var props = metadata.getAsJsonObject();
-        var boundsX = intProperty(props, "openslide.bounds-x");
-        var boundsY = intProperty(props, "openslide.bounds-y");
-        var boundsWidth = intProperty(props, "openslide.bounds-width");
-        var boundsHeight = intProperty(props, "openslide.bounds-height");
-        if (boundsX == null || boundsY == null || boundsWidth == null || boundsHeight == null) {
-            return CoordinateShift.NONE;
-        }
-        if (serverWidth != boundsWidth || serverHeight != boundsHeight) {
-            return CoordinateShift.NONE;
-        }
-        return new CoordinateShift(-boundsX, -boundsY);
-    }
-
-    private static Integer intProperty(JsonObject obj, String name) {
-        var element = obj.get(name);
-        if (element == null || !element.isJsonPrimitive()) {
-            return null;
-        }
-        try {
-            return element.getAsInt();
-        } catch (NumberFormatException | ClassCastException | IllegalStateException e) {
-            logger.debug("Could not parse OpenSlide integer property {}={}", name, element);
-            return null;
-        }
+        var origin = ImageServerCoordinates.displayOriginInFullSlideCoordinates(imageData.getServer());
+        return new CoordinateShift(-origin.x(), -origin.y());
     }
 
     static JsonElement translateGeoJson(JsonElement geojson, double dx, double dy) {

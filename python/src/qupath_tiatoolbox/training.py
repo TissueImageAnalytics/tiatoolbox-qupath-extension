@@ -41,6 +41,8 @@ class _SlideSpec:
     wsi_path: Path
     geojson_path: Path
     split: str
+    origin_x: float = 0.0
+    origin_y: float = 0.0
 
 
 _ANNOTATION_STORE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
@@ -462,6 +464,8 @@ def _parse_slides(payload: list[dict[str, Any]]) -> list[_SlideSpec]:
             wsi_path=Path(item["wsi_path"]),
             geojson_path=Path(item["geojson_path"]),
             split=str(item["split"]),
+            origin_x=float(item.get("origin_x", 0.0) or 0.0),
+            origin_y=float(item.get("origin_y", 0.0) or 0.0),
         )
         for item in payload
     ]
@@ -490,7 +494,14 @@ def _build_stores(slides: list[_SlideSpec], stores_dir: Path, listener: Any) -> 
             store_path.unlink()
         store = SQLiteStore(store_path)
         try:
-            store.add_from_geojson(slide.geojson_path, transform=_qupath_transform)
+            store.add_from_geojson(
+                slide.geojson_path,
+                transform=lambda annotation, slide=slide: _qupath_transform(
+                    annotation,
+                    origin_x=slide.origin_x,
+                    origin_y=slide.origin_y,
+                ),
+            )
             store.commit()
         finally:
             store.close()
@@ -770,7 +781,12 @@ def _candidate_segmentation_labels(
     return {int(value) for value in np.unique(values) if int(value) > 0}
 
 
-def _qupath_transform(annotation: Annotation) -> Annotation:
+def _qupath_transform(
+    annotation: Annotation,
+    *,
+    origin_x: float = 0.0,
+    origin_y: float = 0.0,
+) -> Annotation:
     props = annotation.properties
     classification = props.get("classification")
     if isinstance(classification, dict):
@@ -787,6 +803,15 @@ def _qupath_transform(annotation: Annotation) -> Annotation:
                     props[str(measurement["name"])] = measurement["value"]
     if "objectType" in props:
         props["type"] = props.pop("objectType")
+    if origin_x != 0.0 or origin_y != 0.0:
+        try:
+            from shapely.affinity import translate
+        except ImportError as exc:  # pragma: no cover - tiatoolbox depends on shapely
+            raise RuntimeError("Shapely is required to offset QuPath training annotations") from exc
+        return Annotation(
+            translate(annotation.geometry, xoff=origin_x, yoff=origin_y),
+            props,
+        )
     return annotation
 
 
