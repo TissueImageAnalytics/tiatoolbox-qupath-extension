@@ -430,6 +430,9 @@ def _build_artifact(
                 **metadata,
                 "semantic_background_label": 0,
                 "semantic_min_confidence": 0.5,
+                "semantic_min_object_area": 5 * 5,
+                "semantic_component_area_threshold": 36,
+                "semantic_morph_kernel_diameter": 5,
             },
         )
 
