@@ -252,7 +252,7 @@ def run_training(
     task = SegmentationTask(ignore_index=-100) if is_segmentation else ClassificationTask(ignore_index=-100)
 
     batch_size = int(options.get("batch_size", 8))
-    num_workers = int(options.get("num_workers", 0))
+    num_workers = int(options.get("num_workers", 4))
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = (
         DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
