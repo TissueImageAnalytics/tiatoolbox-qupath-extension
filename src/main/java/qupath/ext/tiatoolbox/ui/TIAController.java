@@ -64,6 +64,7 @@ public class TIAController {
     @FXML private CheckBox artifactCheckBox;
     @FXML private TextField artifactField;
     @FXML private Button artifactBrowseButton;
+    @FXML private Button trainModelButton;
     @FXML private CheckBox autoMaskCheckBox;
     @FXML private RadioButton scopeCurrent;
     @FXML private RadioButton scopeProject;
@@ -75,6 +76,7 @@ public class TIAController {
 
     private QuPathGUI qupath;
     private RuntimeInstallCommand runtimeInstallCommand;
+    private TrainingCommand trainingCommand;
     private final AtomicReference<Task<Integer>> currentTask = new AtomicReference<>();
 
     /** Full, unfiltered model list; the ComboBox shows a FilteredList view of it. */
@@ -84,6 +86,7 @@ public class TIAController {
     public void setQuPath(QuPathGUI qupath) {
         this.qupath = qupath;
         this.runtimeInstallCommand = new RuntimeInstallCommand(qupath, this::refreshRuntimeBanner);
+        this.trainingCommand = new TrainingCommand(qupath);
         // Disable "All project images" when no project is open. The binding
         // tracks live changes so opening a project mid-dialog enables it.
         scopeProject.disableProperty().bind(qupath.projectProperty().isNull());
@@ -288,6 +291,12 @@ public class TIAController {
         // the user reopens the dialog. As a courtesy, refresh now too — the
         // banner will continue to show until the install completes.
         refreshRuntimeBanner();
+    }
+
+    @FXML
+    private void onTrainModel() {
+        if (trainingCommand == null) return;
+        trainingCommand.run();
     }
 
     @FXML

@@ -96,8 +96,13 @@
             <RowConstraints/><RowConstraints/><RowConstraints/>
         </rowConstraints>
 
-        <CheckBox fx:id="artifactCheckBox" text="%ui.artifact.use"
-                  GridPane.rowIndex="0" GridPane.columnIndex="0" GridPane.columnSpan="3"/>
+        <HBox spacing="8.0" alignment="CENTER_LEFT"
+              GridPane.rowIndex="0" GridPane.columnIndex="0" GridPane.columnSpan="3">
+            <CheckBox fx:id="artifactCheckBox" text="%ui.artifact.use"
+                      wrapText="true" maxWidth="Infinity" HBox.hgrow="ALWAYS"/>
+            <Button fx:id="trainModelButton" text="%ui.artifact.train"
+                    onAction="#onTrainModel"/>
+        </HBox>
         <TextField fx:id="artifactField" editable="false"
                    GridPane.rowIndex="1" GridPane.columnIndex="0" GridPane.columnSpan="2"
                    GridPane.hgrow="ALWAYS"/>
