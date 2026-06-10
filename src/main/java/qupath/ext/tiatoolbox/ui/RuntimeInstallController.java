@@ -59,6 +59,11 @@ public class RuntimeInstallController {
         localCloneField.disableProperty().bind(localCloneCheckBox.selectedProperty().not());
         browseLocalCloneButton.disableProperty().bind(localCloneCheckBox.selectedProperty().not());
         editableCheckBox.disableProperty().bind(localCloneCheckBox.selectedProperty().not());
+        localCloneCheckBox.selectedProperty().addListener((obs, old, selected) -> {
+            if (selected && localCloneField.getText().isBlank()) {
+                localCloneField.setText(RES.getString("runtime.install.local-clone.default"));
+            }
+        });
 
         // If a previous install left a working venv, surface that immediately.
         var python = RuntimePaths.installedPython();
@@ -200,9 +205,9 @@ public class RuntimeInstallController {
         }
         var text = localCloneField.getText() == null ? "" : localCloneField.getText().trim();
         if (text.isBlank()) {
-            throw new IllegalArgumentException("Choose a local TIAToolbox clone.");
+            throw new IllegalArgumentException("Choose a local TIAToolbox clone or enter a git URL.");
         }
-        return new RuntimeInstallOptions(Path.of(text), editableCheckBox.isSelected());
+        return RuntimeInstallOptions.fromTiatoolboxSource(text, editableCheckBox.isSelected());
     }
 
     private java.util.Optional<Path> initialLocalCloneDirectory() {

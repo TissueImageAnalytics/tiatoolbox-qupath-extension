@@ -60,17 +60,13 @@ public final class RuntimeInstaller {
         Files.createDirectories(RuntimePaths.logsDir());
 
         log.accept("Runtime directory: " + root);
-        if (options.useLocalTiatoolboxClone()) {
-            log.accept("TIAToolbox source: " + options.localTiatoolboxClone()
-                    + (options.editableLocalClone() ? " (editable source override)" : ""));
-            validateLocalTiatoolboxClone(options.localTiatoolboxClone());
-        }
+        var tiatoolboxSource = prepareTiatoolboxSource(options);
 
         extractUvBinary();
         extractSidecarSources();
-        writeProjectFile(options);
+        writeProjectFile(options, tiatoolboxSource);
         runUvSync();
-        configureLocalTiatoolboxOverride(options);
+        configureLocalTiatoolboxOverride(options, tiatoolboxSource);
 
         var python = RuntimePaths.venvPython();
         if (!Files.isExecutable(python)) {
@@ -121,10 +117,55 @@ public final class RuntimeInstaller {
         }
     }
 
-    private void writeProjectFile(RuntimeInstallOptions options) throws IOException {
+    private Path prepareTiatoolboxSource(RuntimeInstallOptions options) throws IOException, InterruptedException {
+        if (options.useRemoteTiatoolboxClone()) {
+            return cloneRemoteTiatoolbox(options);
+        }
+        if (options.useLocalTiatoolboxClone()) {
+            log.accept("TIAToolbox source: " + options.localTiatoolboxClone()
+                    + sourceModeSuffix(options));
+            validateLocalTiatoolboxClone(options.localTiatoolboxClone());
+            return options.localTiatoolboxClone();
+        }
+        return null;
+    }
+
+    private Path cloneRemoteTiatoolbox(RuntimeInstallOptions options) throws IOException, InterruptedException {
+        var target = RuntimePaths.tiatoolboxSourceDir();
+        if (Files.exists(target)) {
+            log.accept("Removing previous managed TIAToolbox clone: " + target);
+            deleteRecursive(target);
+        }
+        Files.createDirectories(target.getParent());
+
+        var cmd = new ArrayList<String>();
+        cmd.add("git");
+        cmd.add("clone");
+        cmd.add("--depth");
+        cmd.add("1");
+        if (options.remoteTiatoolboxGitBranch() != null) {
+            cmd.add("--branch");
+            cmd.add(options.remoteTiatoolboxGitBranch());
+        }
+        cmd.add(options.remoteTiatoolboxGitUrl());
+        cmd.add(target.toString());
+
+        log.accept("Cloning TIAToolbox source: " + options.remoteTiatoolboxGitUrl()
+                + (options.remoteTiatoolboxGitBranch() == null
+                ? ""
+                : " (branch " + options.remoteTiatoolboxGitBranch() + ")"));
+        runLoggedCommand(cmd, RuntimePaths.runtimeRoot());
+        validateLocalTiatoolboxClone(target);
+        log.accept("TIAToolbox source: " + target
+                + sourceModeSuffix(options));
+        return target;
+    }
+
+    private void writeProjectFile(RuntimeInstallOptions options, Path tiatoolboxSource) throws IOException {
         var contents = readResourceText(RES_BASE + "pyproject.toml");
-        if (options.useLocalTiatoolboxClone() && !options.editableLocalClone()) {
-            contents = withLocalTiatoolboxSource(contents, options);
+        if (tiatoolboxSource != null
+                && (options.useRemoteTiatoolboxClone() || !options.editableLocalClone())) {
+            contents = withLocalTiatoolboxSource(contents, options, tiatoolboxSource);
         }
         Files.writeString(RuntimePaths.projectFile(), contents, StandardCharsets.UTF_8);
         log.accept("Wrote pyproject.toml");
@@ -183,18 +224,18 @@ public final class RuntimeInstaller {
         }
     }
 
-    private void configureLocalTiatoolboxOverride(RuntimeInstallOptions options)
+    private void configureLocalTiatoolboxOverride(RuntimeInstallOptions options, Path tiatoolboxSource)
             throws IOException, InterruptedException {
         var sitePackages = sitePackagesDir();
         var pth = sitePackages.resolve(LOCAL_TIA_PTH);
 
-        if (!options.useLocalTiatoolboxClone() || !options.editableLocalClone()) {
+        if (tiatoolboxSource == null || !options.useLocalTiatoolboxClone() || !options.editableLocalClone()) {
             Files.deleteIfExists(pth);
             return;
         }
 
         Files.createDirectories(sitePackages);
-        var source = options.localTiatoolboxClone().toString();
+        var source = tiatoolboxSource.toString();
         var contents = "import sys; p = " + pythonString(source)
                 + "; sys.path.remove(p) if p in sys.path else None; sys.path.insert(0, p)"
                 + System.lineSeparator();
@@ -273,9 +314,56 @@ public final class RuntimeInstaller {
         }
     }
 
-    private static String withLocalTiatoolboxSource(String contents, RuntimeInstallOptions options) {
+    private static String sourceModeSuffix(RuntimeInstallOptions options) {
+        if (!options.editableLocalClone()) {
+            return "";
+        }
+        return options.useRemoteTiatoolboxClone()
+                ? " (editable install)"
+                : " (editable source override)";
+    }
+
+    private void runLoggedCommand(java.util.List<String> cmd, Path directory)
+            throws IOException, InterruptedException {
+        log.accept("Running: " + String.join(" ", cmd));
+
+        var pb = new ProcessBuilder(cmd);
+        pb.directory(directory.toFile());
+        pb.redirectErrorStream(true);
+
+        var proc = pb.start();
+        process = proc;
+        try (var reader = new BufferedReader(
+                new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                log.accept(line);
+            }
+            int code = proc.waitFor();
+            if (code != 0) {
+                throw new IOException(String.join(" ", cmd) + " exited with code " + code);
+            }
+        } catch (InterruptedException e) {
+            cancel();
+            try {
+                if (!proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                    proc.destroyForcibly();
+                }
+            } finally {
+                Thread.currentThread().interrupt();
+            }
+            throw e;
+        } finally {
+            process = null;
+        }
+    }
+
+    private static String withLocalTiatoolboxSource(
+            String contents,
+            RuntimeInstallOptions options,
+            Path tiatoolboxSource) {
         var sourceLine = "tiatoolbox = { path = "
-                + tomlString(options.localTiatoolboxClone().toString())
+                + tomlString(tiatoolboxSource.toString())
                 + (options.editableLocalClone() ? ", editable = true" : "")
                 + " }";
         var lines = contents.split("\\R", -1);
