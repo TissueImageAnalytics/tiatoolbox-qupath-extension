@@ -22,7 +22,7 @@ import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
-import javafx.stage.FileChooser;
+import javafx.stage.DirectoryChooser;
 import javafx.util.StringConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -301,17 +301,15 @@ public class TIAController {
 
     @FXML
     private void onBrowseArtifact() {
-        var chooser = new FileChooser();
-        chooser.setTitle(RES.getString("ui.artifact.use"));
-        chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("Training artifact", "training_artifact.json", "*.json"));
+        var chooser = new DirectoryChooser();
+        chooser.setTitle(RES.getString("ui.artifact.browse-title"));
         var initialDirectory = artifactInitialDirectory();
         if (initialDirectory != null && Files.isDirectory(initialDirectory)) {
             chooser.setInitialDirectory(initialDirectory.toFile());
         }
-        var file = chooser.showOpenDialog(runButton.getScene().getWindow());
-        if (file != null) {
-            artifactField.setText(file.toPath().toString());
+        var directory = chooser.showDialog(runButton.getScene().getWindow());
+        if (directory != null) {
+            artifactField.setText(directory.toPath().toString());
             artifactCheckBox.setSelected(true);
         }
     }
@@ -336,9 +334,17 @@ public class TIAController {
         if (!useArtifact && model == null) {
             return;
         }
-        var artifactPath = artifactField.getText() == null ? "" : artifactField.getText().trim();
-        if (useArtifact && artifactPath.isBlank()) {
+        var artifactPath = selectedArtifactPath();
+        if (useArtifact && artifactPath == null) {
             Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.artifact-not-set"));
+            return;
+        }
+        if (useArtifact && !Files.isRegularFile(artifactPath)) {
+            Dialogs.showErrorMessage(
+                    RES.getString("title"),
+                    MessageFormat.format(
+                            RES.getString("ui.artifact.description.missing"),
+                            artifactPath));
             return;
         }
         var batch = resolveScope();
@@ -351,7 +357,7 @@ public class TIAController {
                 .batchSize(batchSpinner.getValue())
                 .autoGetMask(autoMaskCheckBox.isSelected());
         if (useArtifact) {
-            builder.artifactPath(artifactPath);
+            builder.artifactPath(artifactPath.toString());
         } else {
             builder.model(model.name());
         }
@@ -422,7 +428,7 @@ public class TIAController {
                             ? ""
                             : String.format("[%d/%d] %s — ", i + 1, entries.size(), entry.name());
                     var label = artifactCheckBox.isSelected()
-                            ? java.nio.file.Path.of(artifactField.getText()).getFileName().toString()
+                            ? selectedArtifactLabel()
                             : model.name();
                     updateMessage(prefix[0] + MessageFormat.format(
                             RES.getString("ui.status.running"), label));
@@ -518,6 +524,30 @@ public class TIAController {
         return base == null ? null : base;
     }
 
+    private Path selectedArtifactPath() {
+        var text = artifactField.getText() == null ? "" : artifactField.getText().trim();
+        if (text.isBlank()) {
+            return null;
+        }
+        var path = Path.of(text);
+        return Files.isDirectory(path) ? path.resolve("training_artifact.json") : path;
+    }
+
+    private String selectedArtifactLabel() {
+        var text = artifactField.getText() == null ? "" : artifactField.getText().trim();
+        if (text.isBlank()) {
+            return "training artifact";
+        }
+        var path = Path.of(text);
+        if (Files.isDirectory(path)) {
+            var name = path.getFileName();
+            return name == null ? text : name.toString();
+        }
+        var parent = path.getParent();
+        var name = parent == null ? path.getFileName() : parent.getFileName();
+        return name == null ? text : name.toString();
+    }
+
     private void updateModelDescription() {
         if (artifactCheckBox != null && artifactCheckBox.isSelected()) {
             modelDescription.setText(artifactDescription());
@@ -533,9 +563,9 @@ public class TIAController {
             return RES.getString("ui.artifact.description.empty");
         }
 
-        var path = Path.of(text);
+        var path = selectedArtifactPath();
         if (!Files.isRegularFile(path)) {
-            return MessageFormat.format(RES.getString("ui.artifact.description.missing"), text);
+            return MessageFormat.format(RES.getString("ui.artifact.description.missing"), path);
         }
 
         try {

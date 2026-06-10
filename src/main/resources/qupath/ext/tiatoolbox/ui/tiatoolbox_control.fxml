@@ -104,6 +104,7 @@
                     onAction="#onTrainModel"/>
         </HBox>
         <TextField fx:id="artifactField" editable="false"
+                   promptText="%ui.artifact.prompt"
                    GridPane.rowIndex="1" GridPane.columnIndex="0" GridPane.columnSpan="2"
                    GridPane.hgrow="ALWAYS"/>
         <Button fx:id="artifactBrowseButton" text="%ui.artifact.browse"
