@@ -5,7 +5,7 @@ description = "Runtime env for the TIAToolbox QuPath extension (uv-managed)."
 requires-python = "==3.11.*"
 dependencies = [
     "qupath-tiatoolbox",
-    "tiatoolbox>=2.1.0",
+    "tiatoolbox>=2.1.1",
     "torch",
     "torchvision",
 ]
