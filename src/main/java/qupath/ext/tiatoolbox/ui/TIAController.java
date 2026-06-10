@@ -362,8 +362,9 @@ public class TIAController {
             builder.model(model.name());
         }
         var runner = builder.build();
+        var runLabel = useArtifact ? selectedArtifactLabel() : model.name();
 
-        var task = inferenceTask(batch, model, runner);
+        var task = inferenceTask(batch, runLabel, runner);
         currentTask.set(task);
 
         runButton.disableProperty().unbind();
@@ -402,7 +403,7 @@ public class TIAController {
         return entries;
     }
 
-    private Task<Integer> inferenceTask(List<BatchEntry> entries, ModelInfo model, TIAToolbox runner) {
+    private Task<Integer> inferenceTask(List<BatchEntry> entries, String runLabel, TIAToolbox runner) {
 
         var listener = new FxProgressListener();
         return new Task<>() {
@@ -427,11 +428,8 @@ public class TIAController {
                     prefix[0] = entries.size() == 1
                             ? ""
                             : String.format("[%d/%d] %s — ", i + 1, entries.size(), entry.name());
-                    var label = artifactCheckBox.isSelected()
-                            ? selectedArtifactLabel()
-                            : model.name();
                     updateMessage(prefix[0] + MessageFormat.format(
-                            RES.getString("ui.status.running"), label));
+                            RES.getString("ui.status.running"), runLabel));
                     try {
                         var imageData = entry.load();
                         totalAdded += runner.run(imageData, listener);
