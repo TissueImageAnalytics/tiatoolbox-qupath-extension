@@ -18,6 +18,7 @@ import javafx.scene.control.RadioButton;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.util.StringConverter;
 import org.slf4j.Logger;
@@ -151,6 +152,22 @@ public class TIAController {
                 editor.textProperty().isNotEmpty());
         modelClearButton.managedProperty().bind(
                 modelClearButton.visibleProperty());
+        // Typing over a selected model's full name crashes the ComboBox skin
+        // ("start must be <= end", JDK-8228055). Clear the editor first so the
+        // keystroke lands in an empty field. Filter runs before the skin.
+        editor.addEventFilter(KeyEvent.KEY_TYPED, e -> {
+            String ch = e.getCharacter();
+            if (ch == null || ch.isEmpty() || Character.isISOControl(ch.charAt(0))) {
+                return;
+            }
+            String value = editor.getText();
+            for (var m : allModels) {
+                if (m.toString().equals(value)) {
+                    editor.clear();
+                    return;
+                }
+            }
+        });
         // Filter as the user types. Selection-driven "echo" updates (where
         // the editor text is set to a model's display name) are detected below
         // and ignored so choosing an item doesn't re-filter or reopen the popup.
