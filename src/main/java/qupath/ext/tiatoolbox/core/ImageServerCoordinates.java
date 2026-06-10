@@ -26,22 +26,43 @@ public final class ImageServerCoordinates {
      * while still reading tiles from the original level-0 canvas.
      */
     public static Origin displayOriginInFullSlideCoordinates(ImageServer<BufferedImage> server) {
-        if (server instanceof CroppedImageServer cropped) {
-            var region = cropped.getCropRegion();
-            return new Origin(region.getX(), region.getY());
-        }
-        return openSlideOriginFor(server);
+        var region = displayRegionInFullSlideCoordinates(server);
+        return new Origin(region.x(), region.y());
     }
 
-    private static Origin openSlideOriginFor(ImageServer<BufferedImage> server) {
+    /**
+     * Returns the source-slide region displayed by QuPath.
+     *
+     * <p>When {@link DisplayRegion#bounded()} is true, QuPath is displaying
+     * only a bounded subregion of the image source. This is used to restrict
+     * tiatoolbox WSI inference to the same visible canvas.
+     */
+    public static DisplayRegion displayRegionInFullSlideCoordinates(ImageServer<BufferedImage> server) {
+        if (server instanceof CroppedImageServer cropped) {
+            var region = cropped.getCropRegion();
+            return new DisplayRegion(
+                    region.getX(),
+                    region.getY(),
+                    region.getWidth(),
+                    region.getHeight(),
+                    true);
+        }
+        var openSlideRegion = openSlideRegionFor(server);
+        if (openSlideRegion.bounded()) {
+            return openSlideRegion;
+        }
+        return unboundedRegion(server.getWidth(), server.getHeight());
+    }
+
+    private static DisplayRegion openSlideRegionFor(ImageServer<BufferedImage> server) {
         if (!"OpenSlide".equals(server.getServerType())) {
-            return Origin.ZERO;
+            return unboundedRegion(server.getWidth(), server.getHeight());
         }
         try {
             var method = server.getClass().getMethod("dumpMetadata");
             var metadata = method.invoke(server);
             if (metadata instanceof String json) {
-                return openSlideOriginFromMetadata(
+                return openSlideRegionFromMetadata(
                         JsonParser.parseString(json),
                         server.getWidth(),
                         server.getHeight());
@@ -49,12 +70,17 @@ public final class ImageServerCoordinates {
         } catch (ReflectiveOperationException | JsonParseException | IllegalStateException e) {
             logger.debug("Could not read OpenSlide bounds metadata for coordinate correction", e);
         }
-        return Origin.ZERO;
+        return unboundedRegion(server.getWidth(), server.getHeight());
     }
 
     static Origin openSlideOriginFromMetadata(JsonElement metadata, int serverWidth, int serverHeight) {
+        var region = openSlideRegionFromMetadata(metadata, serverWidth, serverHeight);
+        return new Origin(region.x(), region.y());
+    }
+
+    static DisplayRegion openSlideRegionFromMetadata(JsonElement metadata, int serverWidth, int serverHeight) {
         if (metadata == null || !metadata.isJsonObject()) {
-            return Origin.ZERO;
+            return unboundedRegion(serverWidth, serverHeight);
         }
         var props = metadata.getAsJsonObject();
         var boundsX = intProperty(props, "openslide.bounds-x");
@@ -62,12 +88,12 @@ public final class ImageServerCoordinates {
         var boundsWidth = intProperty(props, "openslide.bounds-width");
         var boundsHeight = intProperty(props, "openslide.bounds-height");
         if (boundsX == null || boundsY == null || boundsWidth == null || boundsHeight == null) {
-            return Origin.ZERO;
+            return unboundedRegion(serverWidth, serverHeight);
         }
         if (serverWidth != boundsWidth || serverHeight != boundsHeight) {
-            return Origin.ZERO;
+            return unboundedRegion(serverWidth, serverHeight);
         }
-        return new Origin(boundsX, boundsY);
+        return new DisplayRegion(boundsX, boundsY, boundsWidth, boundsHeight, true);
     }
 
     private static Integer intProperty(JsonObject obj, String name) {
@@ -89,5 +115,11 @@ public final class ImageServerCoordinates {
         public boolean isZero() {
             return x == 0.0 && y == 0.0;
         }
+    }
+
+    public record DisplayRegion(double x, double y, double width, double height, boolean bounded) {}
+
+    private static DisplayRegion unboundedRegion(int width, int height) {
+        return new DisplayRegion(0.0, 0.0, width, height, false);
     }
 }

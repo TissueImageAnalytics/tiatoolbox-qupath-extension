@@ -76,6 +76,7 @@ class TIATask:
                 classes=req.get("classes"),
                 artifact_path=req.get("artifact_path"),
                 auto_get_mask=bool(req.get("auto_get_mask", True)),
+                visible_bounds=req.get("visible_bounds"),
             )
         except Exception as exc:  # noqa: BLE001 — cross-process boundary
             logger.exception("Inference failed")

@@ -3,6 +3,7 @@ package qupath.ext.tiatoolbox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.tiatoolbox.core.BridgeManager;
+import qupath.ext.tiatoolbox.core.ImageServerCoordinates;
 import qupath.ext.tiatoolbox.core.InferenceRequest;
 import qupath.ext.tiatoolbox.core.InferenceResponse;
 import qupath.ext.tiatoolbox.core.ProgressListener;
@@ -257,7 +258,8 @@ public final class TIAToolbox {
                 engine, model,
                 wsiPath.toAbsolutePath().toString(),
                 saveDir.toAbsolutePath().toString(),
-                device, batchSize, numWorkers, classes, artifactPath, autoGetMask);
+                device, batchSize, numWorkers, classes, artifactPath, autoGetMask,
+                visibleBoundsFor(imageData));
 
         var bridge = acquireBridge(pythonPath);
 
@@ -282,6 +284,18 @@ public final class TIAToolbox {
     }
 
     // -- Helpers --------------------------------------------------------------
+
+    private static InferenceRequest.VisibleBounds visibleBoundsFor(ImageData<BufferedImage> imageData) {
+        var region = ImageServerCoordinates.displayRegionInFullSlideCoordinates(imageData.getServer());
+        if (!region.bounded()) {
+            return null;
+        }
+        return new InferenceRequest.VisibleBounds(
+                region.x(),
+                region.y(),
+                region.width(),
+                region.height());
+    }
 
     private Path resolvePythonExe() {
         if (pythonExecutableOverride != null && !pythonExecutableOverride.isBlank()) {
