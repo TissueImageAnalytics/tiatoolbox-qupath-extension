@@ -63,6 +63,19 @@
                    mouseTransparent="true"
                    style="-fx-text-fill: #8a8a8a; -fx-font-size: 13px;
                           -fx-padding: 0 0 0 8;"/>
+            <Button fx:id="modelClearButton" text="&#x2715;" onAction="#onClearModelFilter"
+                    focusTraversable="false"
+                    style="-fx-background-color: transparent;
+                           -fx-text-fill: #6a6a6a;
+                           -fx-font-size: 11px;
+                           -fx-padding: 0 4 0 4;
+                           -fx-cursor: hand;"
+                    StackPane.alignment="CENTER_RIGHT">
+                <StackPane.margin>
+                    <Insets right="30.0"/>
+                </StackPane.margin>
+                <tooltip><Tooltip text="%ui.model.clear-tip"/></tooltip>
+            </Button>
         </StackPane>
         <Button fx:id="modelInfoButton" text="i" onAction="#onShowModelInfo"
                 style="-fx-font-size: 12px; -fx-font-style: italic;

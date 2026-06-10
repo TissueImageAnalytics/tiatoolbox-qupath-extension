@@ -58,6 +58,7 @@ public class TIAController {
     @FXML private ComboBox<ModelInfo> modelChoice;
     @FXML private Label modelFilterIcon;
     @FXML private Button modelInfoButton;
+    @FXML private Button modelClearButton;
     @FXML private ChoiceBox<String> deviceChoice;
     @FXML private Spinner<Integer> batchSpinner;
     @FXML private CheckBox artifactCheckBox;
@@ -155,7 +156,16 @@ public class TIAController {
         // Make space on the left so typed text and the prompt don't sit
         // under the overlaid funnel icon (see FXML modelFilterIcon).
         editor.setStyle("-fx-padding: 4 6 4 22;");
-
+        // Show the clear-button only when there's something in the editor.
+        // managed mirrors visible so the layout doesn't reserve space when
+        // the button is hidden.
+        modelClearButton.visibleProperty().bind(
+                editor.textProperty().isNotEmpty());
+        modelClearButton.managedProperty().bind(
+                modelClearButton.visibleProperty());
+        // Filter as the user types. Selection-driven "echo" updates (where
+        // the editor text is set to a model's display name) are detected below
+        // and ignored so choosing an item doesn't re-filter or reopen the popup.
         editor.textProperty().addListener((obs, old, text) -> {
             // Selection echo guard: if the editor text exactly equals any
             // model's display name, treat this as a selection round-trip
@@ -203,6 +213,19 @@ public class TIAController {
 
     private static String nullToEmpty(String s) {
         return s == null ? "" : s;
+    }
+
+    /**
+     * Wired to the in-field clear button. Empties the editor (which kicks
+     * the filter listener to reset the predicate to "show all"), and
+     * deselects any currently-selected model so the user's next click on a
+     * dropdown item registers as a fresh selection.
+     */
+    @FXML
+    private void onClearModelFilter() {
+        modelChoice.getSelectionModel().clearSelection();
+        modelChoice.getEditor().clear();
+        modelChoice.getEditor().requestFocus();
     }
 
     /**
