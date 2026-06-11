@@ -57,6 +57,7 @@
             <Label text="%runtime.install.local-clone.path"
                    GridPane.rowIndex="1" GridPane.columnIndex="0"/>
             <TextField fx:id="localCloneField"
+                       promptText="%runtime.install.local-clone.prompt"
                        GridPane.rowIndex="1" GridPane.columnIndex="1"
                        GridPane.hgrow="ALWAYS"/>
             <Button fx:id="browseLocalCloneButton" text="%runtime.install.local-clone.browse"

@@ -25,7 +25,9 @@ public record TrainingRequest(
             String name,
             String wsi_path,
             String geojson_path,
-            String split
+            String split,
+            double origin_x,
+            double origin_y
     ) {}
 
     public record ModelSpec(

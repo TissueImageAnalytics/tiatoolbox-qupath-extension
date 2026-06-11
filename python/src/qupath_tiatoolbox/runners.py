@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -48,6 +49,12 @@ _ENGINES: dict[str, _EngineSpec] = {
 # model's class_dict (so the index→label relabel pass should be skipped).
 _ENGINES_WITH_NATIVE_CLASS_NAMES = frozenset({"nucleus_detector"})
 
+_SEMANTIC_MIN_OBJECT_AREA = 5 * 5
+_SEMANTIC_COMPONENT_AREA_THRESHOLD = 36
+_SEMANTIC_MORPH_KERNEL_DIAMETER = 5
+_VISIBLE_BOUNDS_MASK_BASELINE_BIN = 64
+_VISIBLE_BOUNDS_MASK_MAX_DIMENSION = 8192
+
 
 def _load(engine_name: str):
     spec = _ENGINES.get(engine_name)
@@ -71,6 +78,7 @@ def run_engine(
     classes: Sequence[str] | None = None,
     artifact_path: str | None = None,
     auto_get_mask: bool = True,
+    visible_bounds: Any | None = None,
 ) -> dict[str, Any]:
     """Run one tiatoolbox engine on one WSI and return GeoJSON output paths.
 
@@ -95,6 +103,7 @@ def run_engine(
             batch_size=batch_size,
             num_workers=num_workers,
             auto_get_mask=auto_get_mask,
+            visible_bounds=visible_bounds,
         )
 
     EngineCls = _load(engine)
@@ -132,6 +141,13 @@ def run_engine(
         run_kwargs.setdefault("auto_get_mask", True)
         run_kwargs.setdefault("memory_threshold", 50)
 
+    _maybe_add_visible_bounds_mask(
+        run_kwargs,
+        wsi=wsi,
+        visible_bounds=visible_bounds,
+        auto_get_mask=auto_get_mask,
+    )
+
     result = eng.run(**run_kwargs)
 
     geojsons = _collect_geojson_paths(result, out_dir)
@@ -156,6 +172,7 @@ def _run_artifact_engine(
     batch_size: int,
     num_workers: int,
     auto_get_mask: bool,
+    visible_bounds: Any | None = None,
 ) -> dict[str, Any]:
     from .training import build_model
 
@@ -176,10 +193,26 @@ def _run_artifact_engine(
     if qupath_training:
         model.preproc_func = _qupath_training_preproc
         if engine_name == "SemanticSegmentor":
-            min_confidence = float((artifact.metadata or {}).get("semantic_min_confidence", 0.5))
+            metadata = artifact.metadata or {}
+            min_confidence = float(metadata.get("semantic_min_confidence", 0.5))
             model.postproc_func = partial(
                 _qupath_semantic_postproc,
                 min_confidence=min_confidence,
+                min_object_area=int(
+                    metadata.get("semantic_min_object_area", _SEMANTIC_MIN_OBJECT_AREA)
+                ),
+                component_area_threshold=int(
+                    metadata.get(
+                        "semantic_component_area_threshold",
+                        _SEMANTIC_COMPONENT_AREA_THRESHOLD,
+                    )
+                ),
+                kernel_diameter=int(
+                    metadata.get(
+                        "semantic_morph_kernel_diameter",
+                        _SEMANTIC_MORPH_KERNEL_DIAMETER,
+                    )
+                ),
             )
     artifact.load_weights(
         model,
@@ -217,6 +250,12 @@ def _run_artifact_engine(
     run_kwargs["num_workers"] = num_workers
     run_kwargs["device"] = device
     run_kwargs["auto_get_mask"] = auto_get_mask
+    _maybe_add_visible_bounds_mask(
+        run_kwargs,
+        wsi=wsi,
+        visible_bounds=visible_bounds,
+        auto_get_mask=auto_get_mask,
+    )
     result = eng.run(
         images=[str(wsi)],
         patch_mode=False,
@@ -278,13 +317,224 @@ def _qupath_training_preproc(image: np.ndarray) -> np.ndarray:
     return image.astype(np.float32, copy=False)
 
 
-def _qupath_semantic_postproc(image: Any, *, min_confidence: float = 0.5) -> Any:
+def _maybe_add_visible_bounds_mask(
+    run_kwargs: dict[str, Any],
+    *,
+    wsi: Path,
+    visible_bounds: Any | None,
+    auto_get_mask: bool,
+) -> None:
+    if auto_get_mask or run_kwargs.get("masks") is not None:
+        return
+
+    mask = _visible_bounds_mask(wsi, visible_bounds)
+    if mask is None:
+        return
+
+    run_kwargs["masks"] = [mask]
+
+
+def _visible_bounds_mask(wsi: Path, visible_bounds: Any | None) -> np.ndarray | None:
+    bounds = _parse_visible_bounds(visible_bounds)
+    if bounds is None:
+        return None
+
+    from tiatoolbox.wsicore.wsireader import WSIReader
+
+    reader = WSIReader.open(wsi)
+    slide_w, slide_h = (
+        int(value)
+        for value in reader.slide_dimensions(resolution=1.0, units="baseline")
+    )
+    if slide_w <= 0 or slide_h <= 0:
+        return None
+
+    x, y, width, height = bounds
+    end_x = x + width
+    end_y = y + height
+    if x <= 0 and y <= 0 and end_x >= slide_w and end_y >= slide_h:
+        return None
+
+    downsample = max(
+        float(_VISIBLE_BOUNDS_MASK_BASELINE_BIN),
+        slide_w / float(_VISIBLE_BOUNDS_MASK_MAX_DIMENSION),
+        slide_h / float(_VISIBLE_BOUNDS_MASK_MAX_DIMENSION),
+    )
+    mask_w = max(1, int(math.ceil(slide_w / downsample)))
+    mask_h = max(1, int(math.ceil(slide_h / downsample)))
+
+    mask_x0 = _scale_bound_floor(x, slide_w, mask_w)
+    mask_y0 = _scale_bound_floor(y, slide_h, mask_h)
+    mask_x1 = _scale_bound_ceil(end_x, slide_w, mask_w)
+    mask_y1 = _scale_bound_ceil(end_y, slide_h, mask_h)
+    if mask_x1 <= mask_x0 or mask_y1 <= mask_y0:
+        logger.warning(
+            "Skipping empty QuPath visible-bounds mask for %s: bounds=%s slide=(%d, %d)",
+            wsi,
+            bounds,
+            slide_w,
+            slide_h,
+        )
+        return None
+
+    mask = np.zeros((mask_h, mask_w), dtype=np.uint8)
+    mask[mask_y0:mask_y1, mask_x0:mask_x1] = 1
+    logger.info(
+        "Using QuPath visible-bounds mask for %s: bounds=(%.0f, %.0f, %.0f, %.0f), slide=(%d, %d), mask=(%d, %d)",
+        wsi.name,
+        x,
+        y,
+        width,
+        height,
+        slide_w,
+        slide_h,
+        mask_w,
+        mask_h,
+    )
+    return mask
+
+
+def _parse_visible_bounds(value: Any | None) -> tuple[float, float, float, float] | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        x = float(value["x"])
+        y = float(value["y"])
+        width = float(value["width"])
+        height = float(value["height"])
+    except (KeyError, TypeError, ValueError):
+        logger.warning("Ignoring invalid QuPath visible bounds: %r", value)
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return x, y, width, height
+
+
+def _scale_bound_floor(value: float, source_size: int, target_size: int) -> int:
+    scaled = math.floor(value * target_size / source_size)
+    return min(target_size, max(0, scaled))
+
+
+def _scale_bound_ceil(value: float, source_size: int, target_size: int) -> int:
+    scaled = math.ceil(value * target_size / source_size)
+    return min(target_size, max(0, scaled))
+
+
+def _qupath_semantic_postproc(
+    image: Any,
+    *,
+    min_confidence: float = 0.5,
+    min_object_area: int = _SEMANTIC_MIN_OBJECT_AREA,
+    component_area_threshold: int = _SEMANTIC_COMPONENT_AREA_THRESHOLD,
+    kernel_diameter: int = _SEMANTIC_MORPH_KERNEL_DIAMETER,
+) -> Any:
     image = np.asarray(image)
-    if image.shape[-1] == 1:
-        return (image[..., 0] >= min_confidence).astype(np.uint8)
-    labels = image.argmax(axis=-1).astype(np.uint8, copy=False)
-    labels[image.max(axis=-1) < min_confidence] = 0
-    return labels
+    if image.ndim == 2:
+        labels = image.astype(np.uint8, copy=False)
+        probabilities = None
+    elif image.ndim < 2:
+        return image.astype(np.uint8, copy=False)
+    elif image.shape[-1] == 1:
+        probabilities = image[..., 0]
+        labels = (probabilities >= min_confidence).astype(np.uint8)
+    else:
+        probabilities = image
+        labels = image.argmax(axis=-1).astype(np.uint8, copy=False)
+        labels[image.max(axis=-1) < min_confidence] = 0
+    return _clean_semantic_label_map(
+        labels,
+        probabilities=probabilities,
+        min_object_area=min_object_area,
+        component_area_threshold=component_area_threshold,
+        kernel_diameter=kernel_diameter,
+    )
+
+
+def _clean_semantic_label_map(
+    labels: np.ndarray,
+    *,
+    probabilities: np.ndarray | None = None,
+    min_object_area: int = _SEMANTIC_MIN_OBJECT_AREA,
+    component_area_threshold: int = _SEMANTIC_COMPONENT_AREA_THRESHOLD,
+    kernel_diameter: int = _SEMANTIC_MORPH_KERNEL_DIAMETER,
+) -> np.ndarray:
+    labels = np.asarray(labels)
+    if labels.size == 0:
+        return labels.astype(np.uint8, copy=False)
+
+    class_ids = [int(value) for value in np.unique(labels) if int(value) > 0]
+    if not class_ids:
+        return labels.astype(np.uint8, copy=False)
+
+    try:
+        import cv2
+    except ImportError as exc:  # pragma: no cover - tiatoolbox normally provides cv2
+        logger.warning("OpenCV unavailable; skipping semantic morphology: %s", exc)
+        return labels.astype(np.uint8, copy=False)
+
+    kernel = _semantic_morph_kernel(cv2, kernel_diameter)
+    cleaned = np.zeros(labels.shape, dtype=np.uint8)
+    cleaned_scores = np.full(labels.shape, -np.inf, dtype=np.float32)
+
+    for class_id in class_ids:
+        mask = (labels == class_id).astype(np.uint8)
+        mask = _remove_small_components(mask, max(0, int(min_object_area)), cv2)
+        if kernel is not None:
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = _remove_small_components(
+            mask,
+            max(0, int(component_area_threshold)),
+            cv2,
+        )
+        if not np.any(mask):
+            continue
+
+        score = _class_score_map(labels, probabilities, class_id)
+        update = (mask > 0) & (score > cleaned_scores)
+        cleaned[update] = class_id
+        cleaned_scores[update] = score[update]
+    return cleaned
+
+
+def _semantic_morph_kernel(cv2: Any, kernel_diameter: int) -> Any:
+    kernel_diameter = int(kernel_diameter)
+    if kernel_diameter <= 1:
+        return None
+    if kernel_diameter % 2 == 0:
+        kernel_diameter += 1
+    return cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (kernel_diameter, kernel_diameter),
+    )
+
+
+def _remove_small_components(mask: np.ndarray, min_area: int, cv2: Any) -> np.ndarray:
+    if min_area <= 1 or not np.any(mask):
+        return mask.astype(np.uint8, copy=False)
+    num_labels, component_map, stats, _ = cv2.connectedComponentsWithStats(
+        mask.astype(np.uint8, copy=False),
+        connectivity=8,
+    )
+    if num_labels <= 1:
+        return mask.astype(np.uint8, copy=False)
+    keep = np.zeros(num_labels, dtype=bool)
+    keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_area
+    return keep[component_map].astype(np.uint8, copy=False)
+
+
+def _class_score_map(
+    labels: np.ndarray,
+    probabilities: np.ndarray | None,
+    class_id: int,
+) -> np.ndarray:
+    if probabilities is not None:
+        probabilities = np.asarray(probabilities)
+        if probabilities.ndim == 3 and class_id < probabilities.shape[-1]:
+            return probabilities[..., class_id].astype(np.float32, copy=False)
+        if probabilities.ndim == 2 and class_id == 1:
+            return probabilities.astype(np.float32, copy=False)
+    return (labels == class_id).astype(np.float32)
 
 
 def _relabel_geojson_in_place(path: Path, classes: Sequence[str]) -> None:

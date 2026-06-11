@@ -5,6 +5,7 @@
 <?import javafx.scene.control.CheckBox?>
 <?import javafx.scene.control.ChoiceBox?>
 <?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Hyperlink?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ProgressBar?>
 <?import javafx.scene.control.RadioButton?>
@@ -63,6 +64,19 @@
                    mouseTransparent="true"
                    style="-fx-text-fill: #8a8a8a; -fx-font-size: 13px;
                           -fx-padding: 0 0 0 8;"/>
+            <Button fx:id="modelClearButton" text="&#x2715;" onAction="#onClearModelFilter"
+                    focusTraversable="false"
+                    style="-fx-background-color: transparent;
+                           -fx-text-fill: #6a6a6a;
+                           -fx-font-size: 11px;
+                           -fx-padding: 0 4 0 4;
+                           -fx-cursor: hand;"
+                    StackPane.alignment="CENTER_RIGHT">
+                <StackPane.margin>
+                    <Insets right="30.0"/>
+                </StackPane.margin>
+                <tooltip><Tooltip text="%ui.model.clear-tip"/></tooltip>
+            </Button>
         </StackPane>
         <Button fx:id="modelInfoButton" text="i" onAction="#onShowModelInfo"
                 style="-fx-font-size: 12px; -fx-font-style: italic;
@@ -83,9 +97,15 @@
             <RowConstraints/><RowConstraints/><RowConstraints/>
         </rowConstraints>
 
-        <CheckBox fx:id="artifactCheckBox" text="%ui.artifact.use"
-                  GridPane.rowIndex="0" GridPane.columnIndex="0" GridPane.columnSpan="3"/>
+        <HBox spacing="8.0" alignment="CENTER_LEFT"
+              GridPane.rowIndex="0" GridPane.columnIndex="0" GridPane.columnSpan="3">
+            <CheckBox fx:id="artifactCheckBox" text="%ui.artifact.use"
+                      wrapText="true" maxWidth="Infinity" HBox.hgrow="ALWAYS"/>
+            <Button fx:id="trainModelButton" text="%ui.artifact.train"
+                    onAction="#onTrainModel"/>
+        </HBox>
         <TextField fx:id="artifactField" editable="false"
+                   promptText="%ui.artifact.prompt"
                    GridPane.rowIndex="1" GridPane.columnIndex="0" GridPane.columnSpan="2"
                    GridPane.hgrow="ALWAYS"/>
         <Button fx:id="artifactBrowseButton" text="%ui.artifact.browse"
@@ -130,6 +150,10 @@
     <VBox spacing="4.0">
         <Label fx:id="statusLabel" text="%ui.status.idle"/>
         <ProgressBar fx:id="progressBar" maxWidth="Infinity" progress="0.0"/>
+        <Hyperlink fx:id="resultsLink" text="%ui.results.open" onAction="#onOpenResults"
+                   visible="false" managed="false">
+            <tooltip><Tooltip text="%ui.results.open-tip"/></tooltip>
+        </Hyperlink>
     </VBox>
 
     <HBox spacing="8.0" alignment="CENTER_RIGHT">

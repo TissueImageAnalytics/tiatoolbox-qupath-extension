@@ -15,14 +15,16 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
-import javafx.stage.FileChooser;
+import javafx.stage.DirectoryChooser;
 import javafx.util.StringConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +33,7 @@ import qupath.ext.tiatoolbox.core.ProgressListener;
 import qupath.ext.tiatoolbox.install.RuntimePaths;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.tools.GuiTools;
 import qupath.lib.images.ImageData;
 import qupath.lib.projects.ProjectImageEntry;
 
@@ -58,23 +61,29 @@ public class TIAController {
     @FXML private ComboBox<ModelInfo> modelChoice;
     @FXML private Label modelFilterIcon;
     @FXML private Button modelInfoButton;
+    @FXML private Button modelClearButton;
     @FXML private ChoiceBox<String> deviceChoice;
     @FXML private Spinner<Integer> batchSpinner;
     @FXML private CheckBox artifactCheckBox;
     @FXML private TextField artifactField;
     @FXML private Button artifactBrowseButton;
+    @FXML private Button trainModelButton;
     @FXML private CheckBox autoMaskCheckBox;
     @FXML private RadioButton scopeCurrent;
     @FXML private RadioButton scopeProject;
     @FXML private Label modelDescription;
     @FXML private Label statusLabel;
     @FXML private ProgressBar progressBar;
+    @FXML private Hyperlink resultsLink;
     @FXML private Button runButton;
     @FXML private Button cancelButton;
 
     private QuPathGUI qupath;
     private RuntimeInstallCommand runtimeInstallCommand;
+    private TrainingCommand trainingCommand;
     private final AtomicReference<Task<Integer>> currentTask = new AtomicReference<>();
+    /** Results folder of the most recent run, for the "Open results folder" link. */
+    private Path lastResultsDir;
 
     /** Full, unfiltered model list; the ComboBox shows a FilteredList view of it. */
     private final ObservableList<ModelInfo> allModels =
@@ -83,6 +92,7 @@ public class TIAController {
     public void setQuPath(QuPathGUI qupath) {
         this.qupath = qupath;
         this.runtimeInstallCommand = new RuntimeInstallCommand(qupath, this::refreshRuntimeBanner);
+        this.trainingCommand = new TrainingCommand(qupath);
         // Disable "All project images" when no project is open. The binding
         // tracks live changes so opening a project mid-dialog enables it.
         scopeProject.disableProperty().bind(qupath.projectProperty().isNull());
@@ -155,7 +165,29 @@ public class TIAController {
         // Make space on the left so typed text and the prompt don't sit
         // under the overlaid funnel icon (see FXML modelFilterIcon).
         editor.setStyle("-fx-padding: 4 6 4 22;");
-
+        // Show the clear-button only when there's something in the editor.
+        // managed mirrors visible so the layout doesn't reserve space when
+        // the button is hidden.
+        modelClearButton.visibleProperty().bind(
+                editor.textProperty().isNotEmpty());
+        modelClearButton.managedProperty().bind(
+                modelClearButton.visibleProperty());
+        // Typing over a selected model's full name crashes the ComboBox skin
+        // ("start must be <= end", JDK-8228055). Clear the editor first so the
+        // keystroke lands in an empty field. Filter runs before the skin.
+        editor.addEventFilter(KeyEvent.KEY_TYPED, e -> {
+            String ch = e.getCharacter();
+            if (ch == null || ch.isEmpty() || Character.isISOControl(ch.charAt(0))) {
+                return;
+            }
+            var selected = modelChoice.getSelectionModel().getSelectedItem();
+            if (selected != null && selected.toString().equals(editor.getText())) {
+                editor.clear();
+            }
+        });
+        // Filter as the user types. Selection-driven "echo" updates (where
+        // the editor text is set to a model's display name) are detected below
+        // and ignored so choosing an item doesn't re-filter or reopen the popup.
         editor.textProperty().addListener((obs, old, text) -> {
             // Selection echo guard: if the editor text exactly equals any
             // model's display name, treat this as a selection round-trip
@@ -203,6 +235,19 @@ public class TIAController {
 
     private static String nullToEmpty(String s) {
         return s == null ? "" : s;
+    }
+
+    /**
+     * Wired to the in-field clear button. Empties the editor (which kicks
+     * the filter listener to reset the predicate to "show all"), and
+     * deselects any currently-selected model so the user's next click on a
+     * dropdown item registers as a fresh selection.
+     */
+    @FXML
+    private void onClearModelFilter() {
+        modelChoice.getSelectionModel().clearSelection();
+        modelChoice.getEditor().clear();
+        modelChoice.getEditor().requestFocus();
     }
 
     /**
@@ -268,18 +313,22 @@ public class TIAController {
     }
 
     @FXML
+    private void onTrainModel() {
+        if (trainingCommand == null) return;
+        trainingCommand.run();
+    }
+
+    @FXML
     private void onBrowseArtifact() {
-        var chooser = new FileChooser();
-        chooser.setTitle(RES.getString("ui.artifact.use"));
-        chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("Training artifact", "training_artifact.json", "*.json"));
+        var chooser = new DirectoryChooser();
+        chooser.setTitle(RES.getString("ui.artifact.browse-title"));
         var initialDirectory = artifactInitialDirectory();
         if (initialDirectory != null && Files.isDirectory(initialDirectory)) {
             chooser.setInitialDirectory(initialDirectory.toFile());
         }
-        var file = chooser.showOpenDialog(runButton.getScene().getWindow());
-        if (file != null) {
-            artifactField.setText(file.toPath().toString());
+        var directory = chooser.showDialog(runButton.getScene().getWindow());
+        if (directory != null) {
+            artifactField.setText(directory.toPath().toString());
             artifactCheckBox.setSelected(true);
         }
     }
@@ -304,9 +353,17 @@ public class TIAController {
         if (!useArtifact && model == null) {
             return;
         }
-        var artifactPath = artifactField.getText() == null ? "" : artifactField.getText().trim();
-        if (useArtifact && artifactPath.isBlank()) {
+        var artifactPath = selectedArtifactPath();
+        if (useArtifact && artifactPath == null) {
             Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.artifact-not-set"));
+            return;
+        }
+        if (useArtifact && !Files.isRegularFile(artifactPath)) {
+            Dialogs.showErrorMessage(
+                    RES.getString("title"),
+                    MessageFormat.format(
+                            RES.getString("ui.artifact.description.missing"),
+                            artifactPath));
             return;
         }
         var batch = resolveScope();
@@ -319,19 +376,21 @@ public class TIAController {
                 .batchSize(batchSpinner.getValue())
                 .autoGetMask(autoMaskCheckBox.isSelected());
         if (useArtifact) {
-            builder.artifactPath(artifactPath);
+            builder.artifactPath(artifactPath.toString());
         } else {
             builder.model(model.name());
         }
         var runner = builder.build();
+        var runLabel = useArtifact ? selectedArtifactLabel() : model.name();
 
-        var task = inferenceTask(batch, model, runner);
+        var task = inferenceTask(batch, runLabel, runner);
         currentTask.set(task);
 
         runButton.disableProperty().unbind();
         runButton.disableProperty().set(true);
         cancelButton.setDisable(false);
         progressBar.setProgress(0.0);
+        hideResultsLink();
 
         var th = new Thread(task, "tiatoolbox-run");
         th.setDaemon(true);
@@ -364,7 +423,7 @@ public class TIAController {
         return entries;
     }
 
-    private Task<Integer> inferenceTask(List<BatchEntry> entries, ModelInfo model, TIAToolbox runner) {
+    private Task<Integer> inferenceTask(List<BatchEntry> entries, String runLabel, TIAToolbox runner) {
 
         var listener = new FxProgressListener();
         return new Task<>() {
@@ -389,11 +448,8 @@ public class TIAController {
                     prefix[0] = entries.size() == 1
                             ? ""
                             : String.format("[%d/%d] %s — ", i + 1, entries.size(), entry.name());
-                    var label = artifactCheckBox.isSelected()
-                            ? java.nio.file.Path.of(artifactField.getText()).getFileName().toString()
-                            : model.name();
                     updateMessage(prefix[0] + MessageFormat.format(
-                            RES.getString("ui.status.running"), label));
+                            RES.getString("ui.status.running"), runLabel));
                     try {
                         var imageData = entry.load();
                         totalAdded += runner.run(imageData, listener);
@@ -425,6 +481,7 @@ public class TIAController {
                     statusLabel.setText(RES.getString("ui.status.done") + " (+" + getValue() + " objects)");
                 }
                 progressBar.setProgress(1.0);
+                showResultsLink(runner.resultsDir());
             }
 
             @Override
@@ -456,6 +513,15 @@ public class TIAController {
     }
 
     private Path artifactInitialDirectory() {
+        var projectBase = projectBaseDirectory();
+        if (projectBase != null) {
+            var trainingRoot = projectBase.resolve("tiatoolbox-training");
+            if (Files.isDirectory(trainingRoot)) {
+                return trainingRoot;
+            }
+            return Files.isDirectory(projectBase) ? projectBase : null;
+        }
+
         var existingText = artifactField.getText() == null ? "" : artifactField.getText().trim();
         if (!existingText.isBlank()) {
             var existingPath = Path.of(existingText);
@@ -464,17 +530,7 @@ public class TIAController {
                 return parent;
             }
         }
-
-        var projectBase = projectBaseDirectory();
-        if (projectBase == null) {
-            return null;
-        }
-
-        var trainingRoot = projectBase.resolve("tiatoolbox-training");
-        if (Files.isDirectory(trainingRoot)) {
-            return trainingRoot;
-        }
-        return Files.isDirectory(projectBase) ? projectBase : null;
+        return null;
     }
 
     private Path projectBaseDirectory() {
@@ -484,6 +540,30 @@ public class TIAController {
         var projectPath = qupath.getProject().getPath();
         var base = Files.isDirectory(projectPath) ? projectPath : projectPath.getParent();
         return base == null ? null : base;
+    }
+
+    private Path selectedArtifactPath() {
+        var text = artifactField.getText() == null ? "" : artifactField.getText().trim();
+        if (text.isBlank()) {
+            return null;
+        }
+        var path = Path.of(text);
+        return Files.isDirectory(path) ? path.resolve("training_artifact.json") : path;
+    }
+
+    private String selectedArtifactLabel() {
+        var text = artifactField.getText() == null ? "" : artifactField.getText().trim();
+        if (text.isBlank()) {
+            return "training artifact";
+        }
+        var path = Path.of(text);
+        if (Files.isDirectory(path)) {
+            var name = path.getFileName();
+            return name == null ? text : name.toString();
+        }
+        var parent = path.getParent();
+        var name = parent == null ? path.getFileName() : parent.getFileName();
+        return name == null ? text : name.toString();
     }
 
     private void updateModelDescription() {
@@ -501,9 +581,9 @@ public class TIAController {
             return RES.getString("ui.artifact.description.empty");
         }
 
-        var path = Path.of(text);
+        var path = selectedArtifactPath();
         if (!Files.isRegularFile(path)) {
-            return MessageFormat.format(RES.getString("ui.artifact.description.missing"), text);
+            return MessageFormat.format(RES.getString("ui.artifact.description.missing"), path);
         }
 
         try {
@@ -572,6 +652,37 @@ public class TIAController {
         if (element == null || element.isJsonNull()) return "";
         if (element.isJsonPrimitive()) return element.getAsJsonPrimitive().getAsString();
         return element.toString();
+    }
+
+    /** Open the most recent run's results folder in the system file browser. */
+    @FXML
+    private void onOpenResults() {
+        resultsLink.setVisited(false);
+        if (lastResultsDir != null) {
+            GuiTools.browseDirectory(lastResultsDir.toFile());
+        }
+    }
+
+    /** Reveal the "Open results folder" link, pointing at {@code dir}. */
+    private void showResultsLink(Path dir) {
+        lastResultsDir = dir;
+        boolean show = dir != null && dir.toFile().isDirectory();
+        if (show) {
+            resultsLink.setText(MessageFormat.format(
+                    RES.getString("ui.results.open"), dir.getFileName().toString()));
+            if (resultsLink.getTooltip() != null) {
+                resultsLink.getTooltip().setText(
+                        RES.getString("ui.results.open-tip") + "\n" + dir.toAbsolutePath());
+            }
+        }
+        resultsLink.setVisited(false);
+        resultsLink.setVisible(show);
+        resultsLink.setManaged(show);
+    }
+
+    private void hideResultsLink() {
+        resultsLink.setVisible(false);
+        resultsLink.setManaged(false);
     }
 
     /**

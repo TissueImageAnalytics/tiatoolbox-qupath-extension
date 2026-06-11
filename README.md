@@ -8,7 +8,7 @@ the open image.
 
 ## Requirements
 
-- QuPath 0.6.0 or compatible.
+- QuPath 0.7.0 or compatible.
 - JDK 21+ — only required to **build** the extension. End users do not need
   a JDK installed, QuPath ships its own JRE.
 

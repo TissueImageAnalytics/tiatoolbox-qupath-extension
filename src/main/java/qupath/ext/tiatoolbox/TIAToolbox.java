@@ -3,6 +3,7 @@ package qupath.ext.tiatoolbox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.tiatoolbox.core.BridgeManager;
+import qupath.ext.tiatoolbox.core.ImageServerCoordinates;
 import qupath.ext.tiatoolbox.core.InferenceRequest;
 import qupath.ext.tiatoolbox.core.InferenceResponse;
 import qupath.ext.tiatoolbox.core.ProgressListener;
@@ -20,8 +21,11 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.HashSet;
 import java.util.List;
-import java.util.UUID;
+import java.util.Set;
 
 /**
  * Public scripting API for the TIAToolbox QuPath extension.
@@ -168,9 +172,28 @@ public final class TIAToolbox {
             this.artifactPath = artifactPath;
             if (artifactPath != null && !artifactPath.isBlank()) {
                 this.engine = "patch_predictor";
-                this.model = "training-artifact";
+                this.model = artifactRunName(artifactPath);
             }
             return this;
+        }
+
+        private static String artifactRunName(String artifactPath) {
+            try {
+                var path = Path.of(artifactPath.trim());
+                var fileName = path.getFileName();
+                if (fileName != null
+                        && "training_artifact.json".equals(fileName.toString())
+                        && path.getParent() != null
+                        && path.getParent().getFileName() != null) {
+                    return path.getParent().getFileName().toString();
+                }
+                if (fileName != null && !fileName.toString().isBlank()) {
+                    return fileName.toString();
+                }
+            } catch (RuntimeException ignored) {
+                // Fall back to a generic name; validation happens before inference.
+            }
+            return "training-artifact";
         }
 
         /**
@@ -194,6 +217,9 @@ public final class TIAToolbox {
 
     // -- Instance state -------------------------------------------------------
 
+    private static final DateTimeFormatter RUN_DIR_TIMESTAMP =
+            DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+
     private final String model;
     private final String engine;
     private final String device;
@@ -203,6 +229,11 @@ public final class TIAToolbox {
     private final String pythonExecutableOverride;
     private final String artifactPath;
     private final boolean autoGetMask;
+
+    /** This run's output folder, created lazily on the first {@code run(...)}. */
+    private Path runResultsDir;
+    /** Per-image subfolder names already used this run (avoids clobbering). */
+    private final Set<String> usedSubdirNames = new HashSet<>();
 
     private TIAToolbox(Builder b) {
         this.model = b.model;
@@ -246,18 +277,14 @@ public final class TIAToolbox {
 
         var pythonPath = resolvePythonExe();
 
-        Path saveDir;
-        try {
-            saveDir = Files.createTempDirectory("tiatoolbox-" + UUID.randomUUID());
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to create temp save directory", e);
-        }
+        var saveDir = imageSaveDir(wsiPath);
 
         var request = new InferenceRequest(
                 engine, model,
                 wsiPath.toAbsolutePath().toString(),
                 saveDir.toAbsolutePath().toString(),
-                device, batchSize, numWorkers, classes, artifactPath, autoGetMask);
+                device, batchSize, numWorkers, classes, artifactPath, autoGetMask,
+                visibleBoundsFor(imageData));
 
         var bridge = acquireBridge(pythonPath);
 
@@ -281,7 +308,91 @@ public final class TIAToolbox {
         }
     }
 
+    // -- Results location -----------------------------------------------------
+
+    /**
+     * The folder this runner writes its outputs into, or {@code null} if it has
+     * not run yet. One folder per runner (i.e. per run); each image lands in a
+     * subfolder named after the slide.
+     */
+    public Path resultsDir() {
+        return runResultsDir;
+    }
+
+    /**
+     * Resolve a per-image output subfolder under this run's results folder,
+     * creating the parent run folder on first use. Each image gets its own
+     * subfolder so a batch never clobbers earlier results (the engine wipes its
+     * {@code save_dir} when {@code overwrite=true}).
+     */
+    private synchronized Path imageSaveDir(Path wsiPath) {
+        if (runResultsDir == null) {
+            var stamp = LocalDateTime.now().format(RUN_DIR_TIMESTAMP);
+            var dir = resultsRoot().resolve("tiatoolbox_" + sanitize(model) + "_" + stamp);
+            try {
+                Files.createDirectories(dir);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to create results directory: " + dir, e);
+            }
+            runResultsDir = dir;
+        }
+
+        // Name the subfolder after the slide (matching the .json written inside),
+        // disambiguating with a counter if two slides share a name this run.
+        var base = sanitize(stemOf(wsiPath));
+        var name = base;
+        for (int n = 2; !usedSubdirNames.add(name); n++) {
+            name = base + "_" + n;
+        }
+        return runResultsDir.resolve(name);
+    }
+
+    /**
+     * Store results with the active project when one is open; otherwise fall
+     * back to the QuPath user directory for isolated slides and scripts.
+     */
+    private static Path resultsRoot() {
+        try {
+            var project = QP.getProject();
+            if (project != null && project.getPath() != null) {
+                var projectPath = project.getPath();
+                var base = Files.isDirectory(projectPath) ? projectPath : projectPath.getParent();
+                if (base != null) {
+                    return base.resolve(RuntimePaths.RESULTS_DIR_NAME);
+                }
+            }
+        } catch (RuntimeException e) {
+            logger.debug("Could not resolve project results directory; using user results directory", e);
+        }
+        return RuntimePaths.resultsRoot();
+    }
+
+    /** Filename stem (drops the final extension), matching tiatoolbox's naming. */
+    private static String stemOf(Path wsiPath) {
+        var name = wsiPath.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    /** Make a string safe to use as a folder name across platforms. */
+    private static String sanitize(String s) {
+        var cleaned = s.replaceAll("[^A-Za-z0-9._-]", "_");
+        return cleaned.isBlank() ? "output" : cleaned;
+    }
+
     // -- Helpers --------------------------------------------------------------
+
+    private static InferenceRequest.VisibleBounds visibleBoundsFor(ImageData<BufferedImage> imageData) {
+        var region = ImageServerCoordinates.displayRegionInFullSlideCoordinates(imageData.getServer());
+        if (!region.bounded()) {
+            return null;
+        }
+        return new InferenceRequest.VisibleBounds(
+                region.x(),
+                region.y(),
+                region.width(),
+                region.height());
+    }
 
     private Path resolvePythonExe() {
         if (pythonExecutableOverride != null && !pythonExecutableOverride.isBlank()) {

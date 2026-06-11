@@ -1,5 +1,9 @@
 package qupath.ext.tiatoolbox.core;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.images.ImageData;
@@ -8,7 +12,10 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
 
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,6 +24,7 @@ import java.util.List;
 public final class ResultImporter {
 
     private static final Logger logger = LoggerFactory.getLogger(ResultImporter.class);
+    private static final Gson GSON = new Gson();
 
     private ResultImporter() {}
 
@@ -28,11 +36,17 @@ public final class ResultImporter {
         if (paths == null || paths.isEmpty()) {
             return 0;
         }
+        var shift = coordinateShiftFor(imageData);
+        if (!shift.isZero()) {
+            logger.info(
+                    "Applying QuPath crop-origin correction to imported GeoJSON: dx={}, dy={} (crop origin x={}, y={})",
+                    shift.dx(), shift.dy(), -shift.dx(), -shift.dy());
+        }
         var hierarchy = imageData.getHierarchy();
         var added = new ArrayList<PathObject>();
         for (var p : paths) {
             var path = Path.of(p);
-            List<PathObject> objs = PathIO.readObjects(path.toFile());
+            List<PathObject> objs = readGeoJsonObjects(path, shift);
             logger.info("Read {} objects from {}", objs.size(), p);
             applyClassifications(objs, path);
             added.addAll(objs);
@@ -40,6 +54,128 @@ public final class ResultImporter {
         hierarchy.addObjects(added);
         hierarchy.fireHierarchyChangedEvent(ResultImporter.class);
         return added.size();
+    }
+
+    private static List<PathObject> readGeoJsonObjects(Path path, CoordinateShift shift) throws IOException {
+        if (shift.isZero()) {
+            return PathIO.readObjects(path.toFile());
+        }
+        try (var reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            var geojson = JsonParser.parseReader(reader);
+            translateGeoJson(geojson, shift.dx(), shift.dy());
+            var bytes = GSON.toJson(geojson).getBytes(StandardCharsets.UTF_8);
+            try (var input = new ByteArrayInputStream(bytes)) {
+                return PathIO.readObjectsFromGeoJSON(input);
+            }
+        }
+    }
+
+    private static CoordinateShift coordinateShiftFor(ImageData<BufferedImage> imageData) {
+        var origin = ImageServerCoordinates.displayOriginInFullSlideCoordinates(imageData.getServer());
+        return new CoordinateShift(-origin.x(), -origin.y());
+    }
+
+    static JsonElement translateGeoJson(JsonElement geojson, double dx, double dy) {
+        if (geojson == null || geojson.isJsonNull() || (dx == 0.0 && dy == 0.0)) {
+            return geojson;
+        }
+        if (!geojson.isJsonObject()) {
+            return geojson;
+        }
+        translateGeoJsonObject(geojson.getAsJsonObject(), dx, dy);
+        return geojson;
+    }
+
+    private static void translateGeoJsonObject(JsonObject obj, double dx, double dy) {
+        translateBbox(obj, dx, dy);
+        var typeElement = obj.get("type");
+        var type = typeElement != null && typeElement.isJsonPrimitive()
+                ? typeElement.getAsString()
+                : "";
+
+        switch (type) {
+            case "FeatureCollection" -> {
+                var features = obj.getAsJsonArray("features");
+                if (features == null) return;
+                for (var feature : features) {
+                    if (feature.isJsonObject()) {
+                        translateGeoJsonObject(feature.getAsJsonObject(), dx, dy);
+                    }
+                }
+            }
+            case "Feature" -> {
+                var geometry = obj.get("geometry");
+                if (geometry != null && geometry.isJsonObject()) {
+                    translateGeoJsonObject(geometry.getAsJsonObject(), dx, dy);
+                }
+            }
+            case "GeometryCollection" -> {
+                var geometries = obj.getAsJsonArray("geometries");
+                if (geometries == null) return;
+                for (var geometry : geometries) {
+                    if (geometry.isJsonObject()) {
+                        translateGeoJsonObject(geometry.getAsJsonObject(), dx, dy);
+                    }
+                }
+            }
+            default -> {
+                var coordinates = obj.get("coordinates");
+                if (coordinates != null) {
+                    translateCoordinates(coordinates, dx, dy);
+                }
+            }
+        }
+    }
+
+    private static void translateCoordinates(JsonElement coordinates, double dx, double dy) {
+        if (!coordinates.isJsonArray()) {
+            return;
+        }
+        var array = coordinates.getAsJsonArray();
+        if (array.size() >= 2 && isNumber(array.get(0)) && isNumber(array.get(1))) {
+            array.set(0, newNumber(array.get(0).getAsDouble() + dx));
+            array.set(1, newNumber(array.get(1).getAsDouble() + dy));
+            return;
+        }
+        for (var child : array) {
+            translateCoordinates(child, dx, dy);
+        }
+    }
+
+    private static void translateBbox(JsonObject obj, double dx, double dy) {
+        var bbox = obj.get("bbox");
+        if (bbox == null || !bbox.isJsonArray()) {
+            return;
+        }
+        var array = bbox.getAsJsonArray();
+        if (array.size() != 4) {
+            return;
+        }
+        if (isNumber(array.get(0)) && isNumber(array.get(1)) &&
+                isNumber(array.get(2)) && isNumber(array.get(3))) {
+            array.set(0, newNumber(array.get(0).getAsDouble() + dx));
+            array.set(1, newNumber(array.get(1).getAsDouble() + dy));
+            array.set(2, newNumber(array.get(2).getAsDouble() + dx));
+            array.set(3, newNumber(array.get(3).getAsDouble() + dy));
+        }
+    }
+
+    private static boolean isNumber(JsonElement element) {
+        return element != null
+                && element.isJsonPrimitive()
+                && element.getAsJsonPrimitive().isNumber();
+    }
+
+    private static JsonElement newNumber(double value) {
+        return GSON.toJsonTree(value);
+    }
+
+    record CoordinateShift(double dx, double dy) {
+        static final CoordinateShift NONE = new CoordinateShift(0.0, 0.0);
+
+        boolean isZero() {
+            return dx == 0.0 && dy == 0.0;
+        }
     }
 
     /**

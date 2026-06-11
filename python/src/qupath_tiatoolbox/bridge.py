@@ -72,10 +72,11 @@ class TIATask:
                 save_dir=save_dir,
                 device=req.get("device", "cpu"),
                 batch_size=int(req.get("batch_size", 8)),
-                num_workers=int(req.get("num_workers", 0)),
+                num_workers=int(req.get("num_workers", 4)),
                 classes=req.get("classes"),
                 artifact_path=req.get("artifact_path"),
                 auto_get_mask=bool(req.get("auto_get_mask", True)),
+                visible_bounds=req.get("visible_bounds"),
             )
         except Exception as exc:  # noqa: BLE001 — cross-process boundary
             logger.exception("Inference failed")
