@@ -160,12 +160,9 @@ public class TIAController {
             if (ch == null || ch.isEmpty() || Character.isISOControl(ch.charAt(0))) {
                 return;
             }
-            String value = editor.getText();
-            for (var m : allModels) {
-                if (m.toString().equals(value)) {
-                    editor.clear();
-                    return;
-                }
+            var selected = modelChoice.getSelectionModel().getSelectedItem();
+            if (selected != null && selected.toString().equals(editor.getText())) {
+                editor.clear();
             }
         });
         // Filter as the user types. Selection-driven "echo" updates (where
@@ -447,7 +444,8 @@ public class TIAController {
             resultsLink.setText(MessageFormat.format(
                     RES.getString("ui.results.open"), dir.getFileName().toString()));
             if (resultsLink.getTooltip() != null) {
-                resultsLink.getTooltip().setText(dir.toAbsolutePath().toString());
+                resultsLink.getTooltip().setText(
+                        RES.getString("ui.results.open-tip") + "\n" + dir.toAbsolutePath());
             }
         }
         resultsLink.setVisited(false);
