@@ -206,7 +206,7 @@ public final class RuntimeInstaller {
         var cmd = java.util.List.of(
                 RuntimePaths.venvPython().toString(),
                 "-c",
-                "import sysconfig; print(sysconfig.get_paths()[\"purelib\"])"
+                "import sysconfig; print(sysconfig.get_path('purelib'))"
         );
         var pb = new ProcessBuilder(cmd);
         pb.environment().remove("PYTHONHOME");
