@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qupath-tiatoolbox"
-version = "0.3.0"
+version = "0.5.0"
 description = "Python sidecar for the TIAToolbox QuPath extension. Bridges QuPath (Java) to tiatoolbox engines via Py4J."
 readme = "README.md"
 requires-python = ">=3.11,<=3.14"
@@ -12,7 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "tiatoolbox-qupath-extension contributors" }]
 dependencies = [
     "py4j>=0.10.9.7",
-    "tiatoolbox==2.1.0",
+    "tiatoolbox==2.1.1",
 ]
 
 [project.scripts]

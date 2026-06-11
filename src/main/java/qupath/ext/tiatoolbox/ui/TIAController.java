@@ -11,12 +11,14 @@ import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.util.StringConverter;
 import org.slf4j.Logger;
@@ -26,10 +28,12 @@ import qupath.ext.tiatoolbox.core.ProgressListener;
 import qupath.ext.tiatoolbox.install.RuntimePaths;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.tools.GuiTools;
 import qupath.lib.images.ImageData;
 import qupath.lib.projects.ProjectImageEntry;
 
 import java.awt.image.BufferedImage;
+import java.nio.file.Path;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.List;
@@ -59,12 +63,15 @@ public class TIAController {
     @FXML private Label modelDescription;
     @FXML private Label statusLabel;
     @FXML private ProgressBar progressBar;
+    @FXML private Hyperlink resultsLink;
     @FXML private Button runButton;
     @FXML private Button cancelButton;
 
     private QuPathGUI qupath;
     private RuntimeInstallCommand runtimeInstallCommand;
     private final AtomicReference<Task<Integer>> currentTask = new AtomicReference<>();
+    /** Results folder of the most recent run, for the "Open results folder" link. */
+    private Path lastResultsDir;
 
     /** Full, unfiltered model list; the ComboBox shows a FilteredList view of it. */
     private final ObservableList<ModelInfo> allModels =
@@ -145,6 +152,19 @@ public class TIAController {
                 editor.textProperty().isNotEmpty());
         modelClearButton.managedProperty().bind(
                 modelClearButton.visibleProperty());
+        // Typing over a selected model's full name crashes the ComboBox skin
+        // ("start must be <= end", JDK-8228055). Clear the editor first so the
+        // keystroke lands in an empty field. Filter runs before the skin.
+        editor.addEventFilter(KeyEvent.KEY_TYPED, e -> {
+            String ch = e.getCharacter();
+            if (ch == null || ch.isEmpty() || Character.isISOControl(ch.charAt(0))) {
+                return;
+            }
+            var selected = modelChoice.getSelectionModel().getSelectedItem();
+            if (selected != null && selected.toString().equals(editor.getText())) {
+                editor.clear();
+            }
+        });
         // Filter as the user types. Selection-driven "echo" updates (where
         // the editor text is set to a model's display name) are detected below
         // and ignored so choosing an item doesn't re-filter or reopen the popup.
@@ -295,6 +315,7 @@ public class TIAController {
         runButton.disableProperty().set(true);
         cancelButton.setDisable(false);
         progressBar.setProgress(0.0);
+        hideResultsLink();
 
         var th = new Thread(task, "tiatoolbox-run");
         th.setDaemon(true);
@@ -375,6 +396,7 @@ public class TIAController {
                 statusLabel.textProperty().unbind();
                 statusLabel.setText(RES.getString("ui.status.done") + " (+" + getValue() + " objects)");
                 progressBar.setProgress(1.0);
+                showResultsLink(runner.resultsDir());
             }
 
             @Override
@@ -403,6 +425,37 @@ public class TIAController {
         currentTask.set(null);
         cancelButton.setDisable(true);
         refreshRuntimeBanner();
+    }
+
+    /** Open the most recent run's results folder in the system file browser. */
+    @FXML
+    private void onOpenResults() {
+        resultsLink.setVisited(false);
+        if (lastResultsDir != null) {
+            GuiTools.browseDirectory(lastResultsDir.toFile());
+        }
+    }
+
+    /** Reveal the "Open results folder" link, pointing at {@code dir}. */
+    private void showResultsLink(Path dir) {
+        lastResultsDir = dir;
+        boolean show = dir != null && dir.toFile().isDirectory();
+        if (show) {
+            resultsLink.setText(MessageFormat.format(
+                    RES.getString("ui.results.open"), dir.getFileName().toString()));
+            if (resultsLink.getTooltip() != null) {
+                resultsLink.getTooltip().setText(
+                        RES.getString("ui.results.open-tip") + "\n" + dir.toAbsolutePath());
+            }
+        }
+        resultsLink.setVisited(false);
+        resultsLink.setVisible(show);
+        resultsLink.setManaged(show);
+    }
+
+    private void hideResultsLink() {
+        resultsLink.setVisible(false);
+        resultsLink.setManaged(false);
     }
 
     /**

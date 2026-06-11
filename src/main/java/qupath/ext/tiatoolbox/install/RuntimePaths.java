@@ -16,11 +16,19 @@ public final class RuntimePaths {
     /** Folder name under the QuPath user directory. */
     public static final String RUNTIME_DIR_NAME = "tiatoolbox-runtime";
 
+    /** Folder name under the QuPath user directory for inference outputs. */
+    public static final String RESULTS_DIR_NAME = "tiatoolbox-results";
+
     private RuntimePaths() {}
 
     /** Root directory: {@code <QuPath user dir>/tiatoolbox-runtime/}. */
     public static Path runtimeRoot() {
         return userDir().resolve(RUNTIME_DIR_NAME);
+    }
+
+    /** Root for inference outputs: {@code <QuPath user dir>/tiatoolbox-results/}. */
+    public static Path resultsRoot() {
+        return userDir().resolve(RESULTS_DIR_NAME);
     }
 
     /** The {@code pyproject.toml} written from the bundled template. */

@@ -18,8 +18,11 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.HashSet;
 import java.util.List;
-import java.util.UUID;
+import java.util.Set;
 
 /**
  * Public scripting API for the TIAToolbox QuPath extension.
@@ -174,6 +177,9 @@ public final class TIAToolbox {
 
     // -- Instance state -------------------------------------------------------
 
+    private static final DateTimeFormatter RUN_DIR_TIMESTAMP =
+            DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+
     private final String model;
     private final String engine;
     private final String device;
@@ -181,6 +187,11 @@ public final class TIAToolbox {
     private final int numWorkers;
     private final List<String> classes;
     private final String pythonExecutableOverride;
+
+    /** This run's output folder, created lazily on the first {@code run(...)}. */
+    private Path runResultsDir;
+    /** Per-image subfolder names already used this run (avoids clobbering). */
+    private final Set<String> usedSubdirNames = new HashSet<>();
 
     private TIAToolbox(Builder b) {
         this.model = b.model;
@@ -222,12 +233,7 @@ public final class TIAToolbox {
 
         var pythonPath = resolvePythonExe();
 
-        Path saveDir;
-        try {
-            saveDir = Files.createTempDirectory("tiatoolbox-" + UUID.randomUUID());
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to create temp save directory", e);
-        }
+        var saveDir = imageSaveDir(wsiPath);
 
         var request = new InferenceRequest(
                 engine, model,
@@ -255,6 +261,58 @@ public final class TIAToolbox {
                 throw new RuntimeException(e);
             }
         }
+    }
+
+    // -- Results location -----------------------------------------------------
+
+    /**
+     * The folder this runner writes its outputs into, or {@code null} if it has
+     * not run yet. One folder per runner (i.e. per run); each image lands in a
+     * subfolder named after the slide.
+     */
+    public Path resultsDir() {
+        return runResultsDir;
+    }
+
+    /**
+     * Resolve a per-image output subfolder under this run's results folder,
+     * creating the parent run folder on first use. Each image gets its own
+     * subfolder so a batch never clobbers earlier results (the engine wipes its
+     * {@code save_dir} when {@code overwrite=true}).
+     */
+    private synchronized Path imageSaveDir(Path wsiPath) {
+        if (runResultsDir == null) {
+            var stamp = LocalDateTime.now().format(RUN_DIR_TIMESTAMP);
+            var dir = RuntimePaths.resultsRoot().resolve("tiatoolbox_" + sanitize(model) + "_" + stamp);
+            try {
+                Files.createDirectories(dir);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to create results directory: " + dir, e);
+            }
+            runResultsDir = dir;
+        }
+
+        // Name the subfolder after the slide (matching the .json written inside),
+        // disambiguating with a counter if two slides share a name this run.
+        var base = sanitize(stemOf(wsiPath));
+        var name = base;
+        for (int n = 2; !usedSubdirNames.add(name); n++) {
+            name = base + "_" + n;
+        }
+        return runResultsDir.resolve(name);
+    }
+
+    /** Filename stem (drops the final extension), matching tiatoolbox's naming. */
+    private static String stemOf(Path wsiPath) {
+        var name = wsiPath.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    /** Make a string safe to use as a folder name across platforms. */
+    private static String sanitize(String s) {
+        var cleaned = s.replaceAll("[^A-Za-z0-9._-]", "_");
+        return cleaned.isBlank() ? "output" : cleaned;
     }
 
     // -- Helpers --------------------------------------------------------------
