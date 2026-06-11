@@ -37,6 +37,12 @@ public final class TrainingCommand implements Runnable {
     @Override
     public void run() {
         try {
+            if (qupath == null || qupath.getProject() == null) {
+                Dialogs.showMessageDialog(
+                        RES.getString("training.title"),
+                        RES.getString("training.project-required"));
+                return;
+            }
             var python = RuntimePaths.installedPython();
             if (python == null) {
                 Dialogs.showErrorMessage(RES.getString("title"), RES.getString("error.python-not-set"));

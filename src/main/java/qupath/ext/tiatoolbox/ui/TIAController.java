@@ -513,6 +513,15 @@ public class TIAController {
     }
 
     private Path artifactInitialDirectory() {
+        var projectBase = projectBaseDirectory();
+        if (projectBase != null) {
+            var trainingRoot = projectBase.resolve("tiatoolbox-training");
+            if (Files.isDirectory(trainingRoot)) {
+                return trainingRoot;
+            }
+            return Files.isDirectory(projectBase) ? projectBase : null;
+        }
+
         var existingText = artifactField.getText() == null ? "" : artifactField.getText().trim();
         if (!existingText.isBlank()) {
             var existingPath = Path.of(existingText);
@@ -521,17 +530,7 @@ public class TIAController {
                 return parent;
             }
         }
-
-        var projectBase = projectBaseDirectory();
-        if (projectBase == null) {
-            return null;
-        }
-
-        var trainingRoot = projectBase.resolve("tiatoolbox-training");
-        if (Files.isDirectory(trainingRoot)) {
-            return trainingRoot;
-        }
-        return Files.isDirectory(projectBase) ? projectBase : null;
+        return null;
     }
 
     private Path projectBaseDirectory() {
