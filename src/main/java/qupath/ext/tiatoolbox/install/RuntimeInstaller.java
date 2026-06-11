@@ -188,6 +188,7 @@ public final class RuntimeInstaller {
         pb.environment().remove("PYTHONHOME");
         pb.environment().remove("PYTHONPATH");
         pb.environment().put("PYTHONNOUSERSITE", "1");
+        pb.environment().put("PYTHONUTF8", "1");
         pb.environment().put("UV_CACHE_DIR", RuntimePaths.uvCacheDir().toString());
         // uv installs Python via python-build-standalone — store it under our root.
         pb.environment().put("UV_PYTHON_INSTALL_DIR",
@@ -479,8 +480,20 @@ public final class RuntimeInstaller {
         try (Stream<Path> walk = Files.walk(root)) {
             var entries = walk.sorted((a, b) -> b.getNameCount() - a.getNameCount()).toList();
             for (var p : entries) {
+                clearReadOnlyAttribute(p);
                 Files.deleteIfExists(p);
             }
+        }
+    }
+
+    private static void clearReadOnlyAttribute(Path path) throws IOException {
+        if (!RuntimePaths.isWindows()) {
+            return;
+        }
+        try {
+            Files.setAttribute(path, "dos:readonly", false);
+        } catch (UnsupportedOperationException ignored) {
+            // Non-DOS filesystem; delete will still report any real failure.
         }
     }
 }

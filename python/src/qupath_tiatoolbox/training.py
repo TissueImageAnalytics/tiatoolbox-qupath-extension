@@ -255,9 +255,14 @@ def run_training(
 
     batch_size = int(options.get("batch_size", 8))
     num_workers = int(options.get("num_workers", 4))
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "persistent_workers": num_workers > 0,
+    }
+    train_loader = DataLoader(train_dataset, shuffle=True, **loader_kwargs)
     val_loader = (
-        DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+        DataLoader(val_dataset, shuffle=False, **loader_kwargs)
         if val_dataset is not None
         else None
     )
