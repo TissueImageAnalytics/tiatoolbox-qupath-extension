@@ -118,6 +118,10 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
+    # py4j logs every connection open/close at INFO ("Closing down clientserver
+    # connection ..."), which the Java side triggers every couple of seconds and
+    # floods the log with normal lifecycle noise. Quiet py4j's INFO logs.
+    logging.getLogger("py4j").setLevel(logging.WARNING)
 
     shutdown = threading.Event()
     task = TIATask(shutdown)

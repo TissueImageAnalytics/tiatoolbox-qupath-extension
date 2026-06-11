@@ -5,6 +5,7 @@
 <?import javafx.scene.control.CheckBox?>
 <?import javafx.scene.control.ChoiceBox?>
 <?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Hyperlink?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ProgressBar?>
 <?import javafx.scene.control.RadioButton?>
@@ -149,6 +150,10 @@
     <VBox spacing="4.0">
         <Label fx:id="statusLabel" text="%ui.status.idle"/>
         <ProgressBar fx:id="progressBar" maxWidth="Infinity" progress="0.0"/>
+        <Hyperlink fx:id="resultsLink" text="%ui.results.open" onAction="#onOpenResults"
+                   visible="false" managed="false">
+            <tooltip><Tooltip text="%ui.results.open-tip"/></tooltip>
+        </Hyperlink>
     </VBox>
 
     <HBox spacing="8.0" alignment="CENTER_RIGHT">
