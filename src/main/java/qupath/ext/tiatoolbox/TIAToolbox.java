@@ -328,7 +328,7 @@ public final class TIAToolbox {
     private synchronized Path imageSaveDir(Path wsiPath) {
         if (runResultsDir == null) {
             var stamp = LocalDateTime.now().format(RUN_DIR_TIMESTAMP);
-            var dir = RuntimePaths.resultsRoot().resolve("tiatoolbox_" + sanitize(model) + "_" + stamp);
+            var dir = resultsRoot().resolve("tiatoolbox_" + sanitize(model) + "_" + stamp);
             try {
                 Files.createDirectories(dir);
             } catch (IOException e) {
@@ -345,6 +345,26 @@ public final class TIAToolbox {
             name = base + "_" + n;
         }
         return runResultsDir.resolve(name);
+    }
+
+    /**
+     * Store results with the active project when one is open; otherwise fall
+     * back to the QuPath user directory for isolated slides and scripts.
+     */
+    private static Path resultsRoot() {
+        try {
+            var project = QP.getProject();
+            if (project != null && project.getPath() != null) {
+                var projectPath = project.getPath();
+                var base = Files.isDirectory(projectPath) ? projectPath : projectPath.getParent();
+                if (base != null) {
+                    return base.resolve(RuntimePaths.RESULTS_DIR_NAME);
+                }
+            }
+        } catch (RuntimeException e) {
+            logger.debug("Could not resolve project results directory; using user results directory", e);
+        }
+        return RuntimePaths.resultsRoot();
     }
 
     /** Filename stem (drops the final extension), matching tiatoolbox's naming. */
