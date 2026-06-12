@@ -38,6 +38,27 @@
     "classes": ["Background", "Tissue"]
   },
   {
+    "name": "fcn_resnet50_unet-bcss",
+    "engine": "semantic_segmentor",
+    "task": "Semantic segmentation",
+    "description": "Breast cancer tissue region segmentation (BCSS); 5-class FCN-ResNet50/UNet on H&E at 0.25 mpp, 1024x1024 patches.",
+    "classes": ["Tumour", "Stroma", "Inflammatory", "Necrosis", "Others"]
+  },
+  {
+    "name": "efficientunet-tissue_mask",
+    "engine": "semantic_segmentor",
+    "task": "Semantic segmentation",
+    "description": "EfficientUNet tissue/background mask; newer/cleaner alternative to fcn-tissue_mask.",
+    "classes": ["Background", "Tissue"]
+  },
+  {
+    "name": "grandqc_tissue_detection",
+    "engine": "semantic_segmentor",
+    "task": "Semantic segmentation",
+    "description": "GrandQC tissue detection; high-precision tissue vs. background (Dice 0.957)",
+    "classes": ["Background", "Tissue"]
+  }
+  {
     "name": "hovernet_fast-pannuke",
     "engine": "multi_task_segmentor",
     "task": "Nucleus instance segmentation",
