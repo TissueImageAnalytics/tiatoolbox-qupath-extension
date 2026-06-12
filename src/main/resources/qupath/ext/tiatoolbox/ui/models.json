@@ -55,9 +55,9 @@
     "name": "grandqc_tissue_detection",
     "engine": "semantic_segmentor",
     "task": "Semantic segmentation",
-    "description": "GrandQC tissue detection; high-precision tissue vs. background (Dice 0.957)",
-    "classes": ["Tissue","Background"]
-  }
+    "description": "GrandQC tissue detection; high-precision tissue vs. background (Dice 0.957).",
+    "classes": ["Tissue", "Background"]
+  },
   {
     "name": "hovernet_fast-pannuke",
     "engine": "multi_task_segmentor",
