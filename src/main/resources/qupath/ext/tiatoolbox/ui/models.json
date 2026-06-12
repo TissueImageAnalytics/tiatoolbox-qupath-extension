@@ -49,14 +49,14 @@
     "engine": "semantic_segmentor",
     "task": "Semantic segmentation",
     "description": "EfficientUNet tissue/background mask; newer/cleaner alternative to fcn-tissue_mask.",
-    "classes": ["Background", "Tissue"]
+    "classes": ["Tissue"]
   },
   {
     "name": "grandqc_tissue_detection",
     "engine": "semantic_segmentor",
     "task": "Semantic segmentation",
     "description": "GrandQC tissue detection; high-precision tissue vs. background (Dice 0.957)",
-    "classes": ["Background", "Tissue"]
+    "classes": ["Tissue","Background"]
   }
   {
     "name": "hovernet_fast-pannuke",
