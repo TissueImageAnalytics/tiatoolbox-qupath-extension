@@ -205,7 +205,8 @@ public class RuntimeInstallController {
         }
         var text = localCloneField.getText() == null ? "" : localCloneField.getText().trim();
         if (text.isBlank()) {
-            throw new IllegalArgumentException("Choose a local TIAToolbox clone or enter a git URL.");
+            throw new IllegalArgumentException(
+                    RES.getString("runtime.install.local-clone.error.blank"));
         }
         return RuntimeInstallOptions.fromTiatoolboxSource(text, editableCheckBox.isSelected());
     }

@@ -1,6 +1,5 @@
 package qupath.ext.tiatoolbox.ui;
 
-import javafx.application.Platform;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
@@ -399,8 +398,12 @@ public class TrainingController {
         var listener = new FxProgressListener();
         return new Task<>() {
             @Override
+            protected void scheduled() {
+                statusLabel.textProperty().bind(messageProperty());
+            }
+
+            @Override
             protected TrainingResponse call() {
-                Platform.runLater(() -> statusLabel.textProperty().bind(messageProperty()));
                 listener.bindStatus(this::updateMessage);
                 listener.bindHeartbeat(sec -> updateMessage(
                         String.format(RES.getString("ui.status.heartbeat"), sec)));
