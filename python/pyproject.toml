@@ -12,7 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "tiatoolbox-qupath-extension contributors" }]
 dependencies = [
     "py4j>=0.10.9.7",
-    "tiatoolbox==2.1.1",
+    "tiatoolbox==2.1.2",
 ]
 
 [project.scripts]
