@@ -19,6 +19,12 @@ public interface TiaRunner {
      */
     String runInference(String requestJson, ProgressListener listener);
 
+    /** Run one QuPath project training request. */
+    String runTraining(String requestJson, ProgressListener listener);
+
+    /** Request best-effort cancellation of the active training job. */
+    void cancelTraining();
+
     /** Ask the sidecar to exit. The Process should terminate shortly after. */
     void shutdown();
 }

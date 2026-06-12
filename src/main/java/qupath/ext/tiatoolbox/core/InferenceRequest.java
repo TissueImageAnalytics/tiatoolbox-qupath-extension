@@ -16,11 +16,16 @@ public record InferenceRequest(
         String device,
         int batch_size,
         int num_workers,
-        List<String> classes
+        List<String> classes,
+        String artifact_path,
+        boolean auto_get_mask,
+        VisibleBounds visible_bounds
 ) {
     private static final Gson GSON = new Gson();
 
     public String toJson() {
         return GSON.toJson(this);
     }
+
+    public record VisibleBounds(double x, double y, double width, double height) {}
 }

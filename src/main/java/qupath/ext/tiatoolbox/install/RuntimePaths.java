@@ -41,6 +41,11 @@ public final class RuntimePaths {
         return runtimeRoot().resolve("sidecar");
     }
 
+    /** Managed TIAToolbox clone used when installing from a remote git URL. */
+    public static Path tiatoolboxSourceDir() {
+        return runtimeRoot().resolve("tiatoolbox-source");
+    }
+
     /** uv-managed virtual environment. */
     public static Path venvDir() {
         return runtimeRoot().resolve(".venv");

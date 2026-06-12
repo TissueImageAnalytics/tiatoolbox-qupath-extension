@@ -3,10 +3,13 @@ package qupath.ext.tiatoolbox;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.tiatoolbox.core.BridgeManager;
+import qupath.ext.tiatoolbox.core.ImageServerCoordinates;
 import qupath.ext.tiatoolbox.core.InferenceRequest;
 import qupath.ext.tiatoolbox.core.InferenceResponse;
 import qupath.ext.tiatoolbox.core.ProgressListener;
 import qupath.ext.tiatoolbox.core.ResultImporter;
+import qupath.ext.tiatoolbox.core.TrainingRequest;
+import qupath.ext.tiatoolbox.core.TrainingResponse;
 import qupath.ext.tiatoolbox.install.RuntimePaths;
 import qupath.ext.tiatoolbox.ui.ModelInfo;
 import qupath.ext.tiatoolbox.ui.TIAPrefs;
@@ -119,6 +122,8 @@ public final class TIAToolbox {
         private int numWorkers = 0;
         private List<String> classes;
         private String pythonExecutable;
+        private String artifactPath;
+        private boolean autoGetMask = true;
 
         private Builder() {}
 
@@ -153,8 +158,43 @@ public final class TIAToolbox {
         public Builder batchSize(int batchSize) { this.batchSize = batchSize; return this; }
         public Builder numWorkers(int numWorkers) { this.numWorkers = numWorkers; return this; }
 
+        /** Whether WSI-mode inference should auto-generate a tissue mask. */
+        public Builder autoGetMask(boolean autoGetMask) {
+            this.autoGetMask = autoGetMask;
+            return this;
+        }
+
         /** Override the human-readable label list for the model's classes. */
         public Builder classes(List<String> classes) { this.classes = classes; return this; }
+
+        /** Use a training artifact manifest instead of a bundled model name. */
+        public Builder artifactPath(String artifactPath) {
+            this.artifactPath = artifactPath;
+            if (artifactPath != null && !artifactPath.isBlank()) {
+                this.engine = "patch_predictor";
+                this.model = artifactRunName(artifactPath);
+            }
+            return this;
+        }
+
+        private static String artifactRunName(String artifactPath) {
+            try {
+                var path = Path.of(artifactPath.trim());
+                var fileName = path.getFileName();
+                if (fileName != null
+                        && "training_artifact.json".equals(fileName.toString())
+                        && path.getParent() != null
+                        && path.getParent().getFileName() != null) {
+                    return path.getParent().getFileName().toString();
+                }
+                if (fileName != null && !fileName.toString().isBlank()) {
+                    return fileName.toString();
+                }
+            } catch (RuntimeException ignored) {
+                // Fall back to a generic name; validation happens before inference.
+            }
+            return "training-artifact";
+        }
 
         /**
          * Override the bundled runtime Python. Most users should install the
@@ -166,7 +206,7 @@ public final class TIAToolbox {
         }
 
         public TIAToolbox build() {
-            if (model == null || model.isBlank())
+            if ((model == null || model.isBlank()) && (artifactPath == null || artifactPath.isBlank()))
                 throw new IllegalStateException("model is required");
             if (engine == null || engine.isBlank())
                 throw new IllegalStateException(
@@ -187,6 +227,8 @@ public final class TIAToolbox {
     private final int numWorkers;
     private final List<String> classes;
     private final String pythonExecutableOverride;
+    private final String artifactPath;
+    private final boolean autoGetMask;
 
     /** This run's output folder, created lazily on the first {@code run(...)}. */
     private Path runResultsDir;
@@ -201,6 +243,8 @@ public final class TIAToolbox {
         this.numWorkers = b.numWorkers;
         this.classes = b.classes;
         this.pythonExecutableOverride = b.pythonExecutable;
+        this.artifactPath = b.artifactPath;
+        this.autoGetMask = b.autoGetMask;
     }
 
     // -- Run entry points -----------------------------------------------------
@@ -239,7 +283,8 @@ public final class TIAToolbox {
                 engine, model,
                 wsiPath.toAbsolutePath().toString(),
                 saveDir.toAbsolutePath().toString(),
-                device, batchSize, numWorkers, classes);
+                device, batchSize, numWorkers, classes, artifactPath, autoGetMask,
+                visibleBoundsFor(imageData));
 
         var bridge = acquireBridge(pythonPath);
 
@@ -283,7 +328,7 @@ public final class TIAToolbox {
     private synchronized Path imageSaveDir(Path wsiPath) {
         if (runResultsDir == null) {
             var stamp = LocalDateTime.now().format(RUN_DIR_TIMESTAMP);
-            var dir = RuntimePaths.resultsRoot().resolve("tiatoolbox_" + sanitize(model) + "_" + stamp);
+            var dir = resultsRoot().resolve("tiatoolbox_" + sanitize(model) + "_" + stamp);
             try {
                 Files.createDirectories(dir);
             } catch (IOException e) {
@@ -302,6 +347,26 @@ public final class TIAToolbox {
         return runResultsDir.resolve(name);
     }
 
+    /**
+     * Store results with the active project when one is open; otherwise fall
+     * back to the QuPath user directory for isolated slides and scripts.
+     */
+    private static Path resultsRoot() {
+        try {
+            var project = QP.getProject();
+            if (project != null && project.getPath() != null) {
+                var projectPath = project.getPath();
+                var base = Files.isDirectory(projectPath) ? projectPath : projectPath.getParent();
+                if (base != null) {
+                    return base.resolve(RuntimePaths.RESULTS_DIR_NAME);
+                }
+            }
+        } catch (RuntimeException e) {
+            logger.debug("Could not resolve project results directory; using user results directory", e);
+        }
+        return RuntimePaths.resultsRoot();
+    }
+
     /** Filename stem (drops the final extension), matching tiatoolbox's naming. */
     private static String stemOf(Path wsiPath) {
         var name = wsiPath.getFileName().toString();
@@ -317,6 +382,18 @@ public final class TIAToolbox {
 
     // -- Helpers --------------------------------------------------------------
 
+    private static InferenceRequest.VisibleBounds visibleBoundsFor(ImageData<BufferedImage> imageData) {
+        var region = ImageServerCoordinates.displayRegionInFullSlideCoordinates(imageData.getServer());
+        if (!region.bounded()) {
+            return null;
+        }
+        return new InferenceRequest.VisibleBounds(
+                region.x(),
+                region.y(),
+                region.width(),
+                region.height());
+    }
+
     private Path resolvePythonExe() {
         if (pythonExecutableOverride != null && !pythonExecutableOverride.isBlank()) {
             return Path.of(pythonExecutableOverride);
@@ -327,6 +404,44 @@ public final class TIAToolbox {
                     "Python runtime not installed. Use Extensions → TIAToolbox → "
                             + "Install Python runtime…");
         return p;
+    }
+
+    /** Run a project training request through the shared Python sidecar. */
+    public static TrainingResponse train(TrainingRequest request, ProgressListener listener) {
+        var python = RuntimePaths.installedPython();
+        if (python == null) {
+            throw new IllegalStateException(
+                    "Python runtime not installed. Use Extensions → TIAToolbox → "
+                            + "Install Python runtime…");
+        }
+        var bridge = acquireBridge(python);
+        synchronized (bridge) {
+            try {
+                var responseJson = bridge.runner().runTraining(request.toJson(), listener);
+                var response = TrainingResponse.fromJson(responseJson);
+                if (!response.ok()) {
+                    var msg = response.message() == null ? "Training failed" : response.message();
+                    throw new RuntimeException(msg);
+                }
+                return response;
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    /** Request best-effort cancellation of active training. */
+    public static void cancelTraining() {
+        synchronized (BRIDGE_LOCK) {
+            if (BRIDGE == null) return;
+            try {
+                BRIDGE.runner().cancelTraining();
+            } catch (Exception e) {
+                logger.debug("cancelTraining failed", e);
+            }
+        }
     }
 
     private static Path filePathOf(ImageData<BufferedImage> imageData) {
