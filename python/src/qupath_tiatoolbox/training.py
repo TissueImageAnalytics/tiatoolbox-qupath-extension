@@ -172,7 +172,6 @@ def run_training(
     is_segmentation = task_type == "semantic_segmentation"
 
     output_dir = Path(request["output_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
     classes = list(request["classes"])
     if not is_segmentation and len(classes) < 2:
         raise ValueError("Patch classification training requires at least two classes.")
@@ -186,20 +185,25 @@ def run_training(
     if not train_slides:
         raise ValueError("Training request contains no training slides.")
 
-    stores_dir = output_dir / "annotation-stores"
-    stores_dir.mkdir(parents=True, exist_ok=True)
-    train_stores = _build_stores(train_slides, stores_dir, listener)
-    val_stores = _build_stores(val_slides, stores_dir, listener) if val_slides else []
-
     options = dict(request.get("options") or {})
     model_spec = dict(request.get("model") or {})
     patch_size = int(options.get("patch_size", 224))
     stride = int(options.get("stride", patch_size))
     mpp = float(options.get("mpp", 0.5))
+    if patch_size <= 0:
+        raise ValueError("Training patch size must be positive.")
     if mpp <= 0:
         raise ValueError("Training resolution `mpp` must be positive.")
     seed = int(options.get("seed", 1))
     min_mask_ratio = float(options.get("min_mask_ratio", 0.01))
+
+    _validate_patch_size_against_slides(slides, patch_size=patch_size, mpp=mpp)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stores_dir = output_dir / "annotation-stores"
+    stores_dir.mkdir(parents=True, exist_ok=True)
+    train_stores = _build_stores(train_slides, stores_dir, listener)
+    val_stores = _build_stores(val_slides, stores_dir, listener) if val_slides else []
 
     target_builder = _target_builder(task_type, class_mapping, options)
 
@@ -512,6 +516,47 @@ def _build_stores(slides: list[_SlideSpec], stores_dir: Path, listener: Any) -> 
             store.close()
         stores.append(store_path)
     return stores
+
+
+def _validate_patch_size_against_slides(
+    slides: list[_SlideSpec],
+    *,
+    patch_size: int,
+    mpp: float,
+) -> None:
+    from tiatoolbox.wsicore.wsireader import WSIReader
+
+    too_small: list[str] = []
+    for slide in slides:
+        reader = WSIReader.open(slide.wsi_path)
+        try:
+            width, height = (
+                float(value)
+                for value in reader.slide_dimensions(resolution=mpp, units="mpp")
+            )
+        finally:
+            close = getattr(reader, "close", None)
+            if callable(close):
+                close()
+        if patch_size <= width and patch_size <= height:
+            continue
+        too_small.append(
+            f"{slide.name}: requested {patch_size}x{patch_size} px at {mpp:g} MPP, "
+            f"image is {max(0, int(width))}x{max(0, int(height))} px at that resolution"
+        )
+
+    if not too_small:
+        return
+
+    examples = "\n".join(f"- {example}" for example in too_small[:5])
+    extra = ""
+    if len(too_small) > 5:
+        extra = f"\n- ... and {len(too_small) - 5} more"
+    raise ValueError(
+        f"Patch size {patch_size}px at {mpp:g} MPP is larger than some selected "
+        "training images.\n\nPlease choose a smaller patch size or lower MPP "
+        f"value.\n\nExamples:\n{examples}{extra}"
+    )
 
 
 def _build_dataset(
