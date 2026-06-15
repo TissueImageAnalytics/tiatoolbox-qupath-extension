@@ -395,10 +395,10 @@ public class TrainingController {
                 mpp));
         var limit = Math.min(examples.size(), 5);
         for (int i = 0; i < limit; i++) {
-            sb.append(System.lineSeparator()).append("- ").append(examples.get(i));
+            sb.append('\n').append("- ").append(examples.get(i));
         }
         if (examples.size() > limit) {
-            sb.append(System.lineSeparator())
+            sb.append('\n')
                     .append("- ... and ")
                     .append(examples.size() - limit)
                     .append(" more");
