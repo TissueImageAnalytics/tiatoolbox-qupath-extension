@@ -223,11 +223,17 @@ public class TrainingController {
             throw new IllegalStateException(RES.getString(key));
         }
 
-        var runDir = resolveRunDirectory();
-        var annotationDir = runDir.resolve("annotations");
-        Files.createDirectories(annotationDir);
+        var patchSize = patchSizeSpinner.getValue();
+        var mpp = mppSpinner.getValue();
+        if (patchSize == null || patchSize <= 0) {
+            throw new IllegalStateException(RES.getString("training.error.patch-size"));
+        }
+        if (mpp == null || mpp <= 0) {
+            throw new IllegalStateException(RES.getString("training.error.mpp"));
+        }
 
-        var candidates = new ArrayList<ExportedSlide>();
+        var pendingSlides = new ArrayList<PendingSlide>();
+        var patchSizeIssues = new ArrayList<String>();
         for (var entry : project.getImageList()) {
             var imageData = entry.readImageData();
             var wsiPath = filePathOf(imageData);
@@ -239,23 +245,44 @@ public class TrainingController {
             if (objects.isEmpty()) {
                 continue;
             }
-            var geojson = annotationDir.resolve(safeName(entry.getImageName()) + ".geojson");
-            PathIO.exportObjectsAsGeoJSON(
-                    geojson,
-                    objects,
-                    PathIO.GeoJsonExportOptions.FEATURE_COLLECTION,
-                    PathIO.GeoJsonExportOptions.EXCLUDE_MEASUREMENTS);
+            var patchSizeIssue = patchSizeIssue(entry.getImageName(), imageData, patchSize, mpp);
+            if (patchSizeIssue != null) {
+                patchSizeIssues.add(patchSizeIssue);
+            }
             var origin = ImageServerCoordinates.displayOriginInFullSlideCoordinates(imageData.getServer());
             if (!origin.isZero()) {
                 logger.info(
                         "Training annotations for {} will be shifted into source-slide coordinates by dx={}, dy={}",
                         entry.getImageName(), origin.x(), origin.y());
             }
-            candidates.add(new ExportedSlide(entry, wsiPath, geojson, origin.x(), origin.y()));
+            pendingSlides.add(new PendingSlide(entry, wsiPath, objects, origin.x(), origin.y()));
         }
 
-        if (candidates.size() < 2) {
+        if (pendingSlides.size() < 2) {
             throw new IllegalStateException(RES.getString("training.error.slides"));
+        }
+        if (!patchSizeIssues.isEmpty()) {
+            throw new IllegalStateException(patchSizeTooLargeMessage(patchSize, mpp, patchSizeIssues));
+        }
+
+        var runDir = resolveRunDirectory();
+        var annotationDir = runDir.resolve("annotations");
+        Files.createDirectories(annotationDir);
+
+        var candidates = new ArrayList<ExportedSlide>();
+        for (var slide : pendingSlides) {
+            var geojson = annotationDir.resolve(safeName(slide.entry.getImageName()) + ".geojson");
+            PathIO.exportObjectsAsGeoJSON(
+                    geojson,
+                    slide.objects,
+                    PathIO.GeoJsonExportOptions.FEATURE_COLLECTION,
+                    PathIO.GeoJsonExportOptions.EXCLUDE_MEASUREMENTS);
+            candidates.add(new ExportedSlide(
+                    slide.entry,
+                    slide.wsiPath,
+                    geojson,
+                    slide.originX,
+                    slide.originY));
         }
 
         var slides = splitSlides(candidates, selectedClasses);
@@ -266,10 +293,6 @@ public class TrainingController {
         }
 
         var spec = parseBackbone(backboneChoice.getValue());
-        var mpp = mppSpinner.getValue();
-        if (mpp == null || mpp <= 0) {
-            throw new IllegalStateException(RES.getString("training.error.mpp"));
-        }
         var request = new TrainingRequest(
                 taskType,
                 slides,
@@ -281,7 +304,7 @@ public class TrainingController {
                         epochsSpinner.getValue(),
                         batchSpinner.getValue(),
                         Double.parseDouble(learningRateField.getText().trim()),
-                        patchSizeSpinner.getValue(),
+                        patchSize,
                         strideSpinner.getValue(),
                         mpp,
                         validationSpinner.getValue(),
@@ -332,6 +355,55 @@ public class TrainingController {
                 .filter(obj -> obj.getPathClass() != null)
                 .filter(obj -> selected.contains(obj.getPathClass().getName()))
                 .collect(Collectors.toCollection(ArrayList::new));
+    }
+
+    private String patchSizeIssue(
+            String imageName,
+            ImageData<BufferedImage> imageData,
+            int patchSize,
+            double mpp) {
+        var server = imageData.getServer();
+        var calibration = server.getPixelCalibration();
+        if (calibration == null || !calibration.hasPixelSizeMicrons()) {
+            return null;
+        }
+        var pixelWidth = calibration.getPixelWidthMicrons();
+        var pixelHeight = calibration.getPixelHeightMicrons();
+        if (pixelWidth <= 0 || pixelHeight <= 0) {
+            return null;
+        }
+
+        var widthAtResolution = server.getWidth() * pixelWidth / mpp;
+        var heightAtResolution = server.getHeight() * pixelHeight / mpp;
+        if (patchSize <= widthAtResolution && patchSize <= heightAtResolution) {
+            return null;
+        }
+
+        return MessageFormat.format(
+                "{0}: requested {1}x{1} px at {2} MPP, image is {3}x{4} px at that resolution",
+                imageName,
+                patchSize,
+                mpp,
+                Math.max(0, (int)Math.floor(widthAtResolution)),
+                Math.max(0, (int)Math.floor(heightAtResolution)));
+    }
+
+    private String patchSizeTooLargeMessage(int patchSize, double mpp, List<String> examples) {
+        var sb = new StringBuilder(MessageFormat.format(
+                RES.getString("training.error.patch-size-too-large"),
+                patchSize,
+                mpp));
+        var limit = Math.min(examples.size(), 5);
+        for (int i = 0; i < limit; i++) {
+            sb.append('\n').append("- ").append(examples.get(i));
+        }
+        if (examples.size() > limit) {
+            sb.append('\n')
+                    .append("- ... and ")
+                    .append(examples.size() - limit)
+                    .append(" more");
+        }
+        return sb.toString();
     }
 
     private List<TrainingRequest.Slide> splitSlides(
@@ -471,6 +543,14 @@ public class TrainingController {
                 .replaceAll("\\s+", " ")
                 .replaceAll("^[. ]+|[. ]+$", "");
     }
+
+    private record PendingSlide(
+            ProjectImageEntry<BufferedImage> entry,
+            Path wsiPath,
+            List<PathObject> objects,
+            double originX,
+            double originY
+    ) {}
 
     private record ExportedSlide(
             ProjectImageEntry<BufferedImage> entry,
