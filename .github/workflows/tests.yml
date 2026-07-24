@@ -40,4 +40,4 @@ jobs:
         with:
           path: build/generated/runtime
           key: uv-binaries-${{ hashFiles('build.gradle.kts') }}
-      - run: ./gradlew build --no-daemon
+      - run: ./gradlew test jar --no-daemon
