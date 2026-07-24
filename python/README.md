@@ -1,13 +1,3 @@
 # qupath-tiatoolbox (Python sidecar)
 
 Python half of the TIAToolbox QuPath extension. Exposes tiatoolbox inference engines to QuPath over a Py4J `ClientServer`.
-
-## Manual test
-
-```bash
-conda activate tiatoolbox-qupath
-python -m qupath_tiatoolbox --python-port 25334
-# from another shell, you can connect with py4j JavaGateway/ClientServer on port 25334.
-```
-
-The process prints `READY port=<N>` to stdout once it accepts connections, and shuts down cleanly when its parent dies (or when a Java client calls `shutdown()`).
