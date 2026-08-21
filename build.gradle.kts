@@ -8,7 +8,7 @@ plugins {
 
 qupathExtension {
     name = "qupath-extension-tiatoolbox"
-    version = "0.5.0"
+    version = "0.6.0"
     group = "io.github.qupath"
     description = "Run TIAToolbox models from QuPath via a Python sidecar."
     automaticModule = "qupath.extension.tiatoolbox"
