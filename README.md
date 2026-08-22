@@ -27,26 +27,6 @@ the open image.
 
 Then set up the Python runtime (see [Python setup](#python-setup) below).
 
-### Developers (local build)
-
-From a clone of this repo:
-
-```bash
-./gradlew clean jar
-# → build/libs/qupath-extension-tiatoolbox-<version>.jar
-```
-
-Add the JAR into QuPath using whichever you prefer:
-
-- **Drag-and-drop** the JAR onto the running QuPath window, or
-- **Copy** the JAR into the QuPath user-extensions folder. By default this
-  is `<QuPath dir>/extensions/` (The exact path is shown under
-  **Edit → Preferences → User directory**). 
-  QuPath auto-loads any JAR placed in this folder. 
-  
-Then, restart QuPath.
-
-
 ### Python setup
 
 Inside QuPath, click **Extensions → TIAToolbox → Install Python runtime…**
@@ -140,8 +120,39 @@ model accepted by the corresponding tiatoolbox engine works (see
 `PatchPredictor`, `SemanticSegmentor`, `MultiTaskSegmentor`, `NucleusDetector`).
 
 
+## Developers (local build)
 
-## Architecture
+### Installation 
+From a clone of this repo:
+
+```bash
+./gradlew clean jar
+# → build/libs/qupath-extension-tiatoolbox-<version>.jar
+```
+
+Add the JAR into QuPath using whichever you prefer:
+
+- **Drag-and-drop** the JAR onto the running QuPath window, or
+- **Copy** the JAR into the QuPath user-extensions folder. By default this
+  is `<QuPath dir>/extensions/` (The exact path is shown under
+  **Edit → Preferences → User directory**). 
+  QuPath auto-loads any JAR placed in this folder. 
+  
+Then, restart QuPath.
+
+### Tests
+
+Unit tests cover the pure logic on both sides (JSON wire format, coordinate
+math, GeoJSON relabelling) and need no models or GPU.
+
+```bash
+./gradlew test                                     # Java
+cd python && pip install --group test && pytest    # Python
+```
+
+
+
+### Architecture
 
 The project has two halves: a Java extension that runs inside QuPath, and a
 Python sidecar that wraps the tiatoolbox engines. They communicate over
@@ -171,7 +182,7 @@ Per call, the sidecar invokes the matching tiatoolbox engine with
 and adds the objects to the QuPath hierarchy.
 
 
-## Repository layout
+### Repository layout
 
 ```
 .
@@ -219,7 +230,7 @@ and adds the objects to the QuPath hierarchy.
         └── runners.py                       # engine dispatch
 ```
 
-## Wire protocol
+### Wire protocol
 
 The Java side sends a JSON request to the Python sidecar and receives a JSON
 response. The contract is defined by

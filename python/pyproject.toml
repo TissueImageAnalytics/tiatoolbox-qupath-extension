@@ -20,3 +20,10 @@ qupath-tiatoolbox = "qupath_tiatoolbox.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qupath_tiatoolbox"]
+
+[dependency-groups]
+test = ["pytest>=8", "numpy"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
